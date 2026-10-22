@@ -52,8 +52,8 @@ final class DebugBridge {
         case "state": if let url = Self.outputURL(arg) { panel.debugState(to: url) }
         case "filter": panel.model.filter = ItemSource(rawValue: arg)
         case "settings":
-            (NSApp.delegate as? AppDelegate)?.openSettings()
-            if !arg.isEmpty { NotificationCenter.default.post(name: .showSettingsTab, object: arg) }
+            let delegate = NSApp.delegate as? AppDelegate
+            if let tab = SettingsTab(rawValue: arg) { delegate?.showSettings(on: tab) } else { delegate?.openSettings() }
         case "settingsSnapshot":
             if let url = Self.outputURL(arg), let w = NSApp.windows.first(where: { $0.title == "Recall Settings" }),
                let view = w.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {

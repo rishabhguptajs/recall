@@ -12,15 +12,18 @@ extension Notification.Name {
 final class SettingsWindowController {
     private var window: NSWindow?
 
-    func show() {
+    /// Opens Settings, optionally on a given tab (works whether or not the window exists yet).
+    func show(tab: SettingsTab? = nil) {
         if window == nil {
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 560),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Recall Settings"
             w.isReleasedWhenClosed = false
-            w.contentView = NSHostingView(rootView: SettingsView())
+            w.contentView = NSHostingView(rootView: SettingsView(initialTab: tab ?? .general))
             w.center()
             window = w
+        } else if let tab {
+            NotificationCenter.default.post(name: .showSettingsTab, object: tab.rawValue)
         }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
@@ -32,7 +35,11 @@ enum SettingsTab: String, CaseIterable {
 }
 
 struct SettingsView: View {
-    @State private var tab: SettingsTab = .general
+    @State private var tab: SettingsTab
+
+    init(initialTab: SettingsTab = .general) {
+        _tab = State(initialValue: initialTab)
+    }
 
     var body: some View {
         VStack(spacing: 14) {

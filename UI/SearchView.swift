@@ -128,8 +128,7 @@ struct ProUpsell: View {
                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
             Button("Activate Pro…") {
-                (NSApp.delegate as? AppDelegate)?.openSettings()
-                NotificationCenter.default.post(name: .showSettingsTab, object: SettingsTab.license.rawValue)
+                (NSApp.delegate as? AppDelegate)?.showSettings(on: .license)
             }
             .padding(.top, 4)
         }

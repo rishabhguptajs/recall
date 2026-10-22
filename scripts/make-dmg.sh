@@ -4,6 +4,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 CONFIG=Release INSTALL=0 ./scripts/build.sh
+SERVER=$(/usr/libexec/PlistBuddy -c "Print RecallLicenseServer" build/Recall.app/Contents/Info.plist)
+if [[ "$SERVER" == *REPLACE-ME* || "$SERVER" != https://* ]]; then
+  echo "error: Release license server is \"$SERVER\". Deploy server/ and set RECALL_LICENSE_SERVER (Release) in project.yml first." >&2
+  [[ "${ALLOW_PLACEHOLDER:-0}" == "1" ]] || exit 1
+fi
 VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" build/Recall.app/Contents/Info.plist)
 STAGE=build/dmg-stage
 rm -rf "$STAGE" && mkdir -p "$STAGE"

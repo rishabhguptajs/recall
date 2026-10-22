@@ -163,6 +163,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func openSettings() { settings.show() }
 
+    func showSettings(on tab: SettingsTab) { settings.show(tab: tab) }
+
     @objc private func togglePause() {
         let paused = !IndexStatus.shared.isPaused
         Task {

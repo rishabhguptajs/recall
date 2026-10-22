@@ -98,8 +98,9 @@ open ~/Applications/Recall.app
 ```
 
 **Signing.** Run `./scripts/make-signing-cert.sh` once.
-- It creates a self-signed "Recall Developer" code-signing certificate in your login keychain, and a backup at
-  `keys/recall-signing.p12` (git-ignored, password `recall`). **Back that file up.**
+- It creates a self-signed "Recall Developer" code-signing certificate in your login keychain.
+- It also writes a backup to `keys/recall-signing.p12`, with a random password in `keys/recall-signing-password.txt`.
+  Both are git-ignored. **Back both up and keep them private**: anyone who has them can sign an app that macOS treats as Recall.
 - `build.sh` signs every build with it, so macOS ties folder permissions to the certificate instead of to one build.
   Without it, every update would ask for folder access again.
 - If you lose the file, your users have to re-approve folder access once after the next update.
