@@ -11,6 +11,7 @@ final class IndexStatus: ObservableObject {
     @Published var done = 0
     @Published var total = 0
     @Published var itemCount = 0
+    @Published var embeddedCount = 0
     @Published var deniedFolders: [URL] = []
 
     var summary: String {

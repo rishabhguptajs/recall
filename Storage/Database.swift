@@ -80,7 +80,44 @@ final class AppDatabase {
                 );
                 """)
         }
+        m.registerMigration("v2-meta") { db in
+            try db.execute(sql: "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+        }
         return m
+    }
+
+    func meta(_ key: String) -> String? {
+        try? pool.read { try String.fetchOne($0, sql: "SELECT value FROM meta WHERE key = ?", arguments: [key]) }
+    }
+
+    func setMeta(_ key: String, _ value: String) {
+        try? pool.write { try $0.execute(sql: "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", arguments: [key, value]) }
+    }
+
+    /// Forces items of these kinds to be re-extracted on the next scan.
+    func invalidateStamps(kinds: [String]) {
+        let marks = kinds.map { _ in "?" }.joined(separator: ",")
+        try? pool.write { try $0.execute(sql: "UPDATE items SET size = -1 WHERE source = 'file' AND kind IN (\(marks))", arguments: StatementArguments(kinds)) }
+    }
+
+    func embeddingCount() -> Int {
+        (try? pool.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM embeddings WHERE length(vector) > 0") }) ?? 0
+    }
+
+    func clearEmbeddings() {
+        try? pool.write { try $0.execute(sql: "DELETE FROM embeddings") }
+    }
+
+    /// Text of specific chunks (used for snippets of meaning-only matches).
+    func chunkTexts(_ ids: [Int64]) -> [Int64: String] {
+        guard !ids.isEmpty else { return [:] }
+        let marks = ids.map { _ in "?" }.joined(separator: ",")
+        let rows = (try? pool.read {
+            try Row.fetchAll($0, sql: "SELECT id, text FROM chunks WHERE id IN (\(marks))", arguments: StatementArguments(ids))
+        }) ?? []
+        var out: [Int64: String] = [:]
+        for r in rows { out[r[0]] = r[1] }
+        return out
     }
 
     // MARK: - Writes

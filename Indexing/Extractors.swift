@@ -46,9 +46,31 @@ struct PlainTextExtractor: Extractor {
         let data = try handle.read(upToCount: Self.maxBytes) ?? Data()
         // Treat files containing NUL bytes as binary.
         if data.prefix(4096).contains(0) { throw ExtractionError.unreadable }
-        let text = String(decoding: data, as: UTF8.self)
-        let kind = ["md", "markdown", "txt", "text", "rst", "org"].contains(url.pathExtension.lowercased()) ? "note" : "text"
-        return Extracted(text: text, kind: kind)
+        let ext = url.pathExtension.lowercased()
+        var text = String(decoding: data, as: UTF8.self)
+        if ext == "html" || ext == "htm" { text = Self.stripHTML(text) }
+        return Extracted(text: text, kind: Self.kind(for: ext))
+    }
+
+    /// note = prose (meaning-searchable), web = saved page text, code/data = keyword search only.
+    static func kind(for ext: String) -> String {
+        switch ext {
+        case "md", "markdown", "txt", "text", "rst", "org", "tex": "note"
+        case "html", "htm": "web"
+        case "csv", "tsv", "json", "yaml", "yml", "toml", "xml", "log", "ipynb", "ini", "cfg", "conf", "env": "data"
+        default: "code"
+        }
+    }
+
+    /// Readable text of an HTML page: drops scripts, styles and tags (no WebKit involved).
+    static func stripHTML(_ html: String) -> String {
+        var s = html.replacingOccurrences(of: "(?is)<(script|style|noscript|svg)[^>]*>.*?</\\1>", with: " ", options: .regularExpression)
+        s = s.replacingOccurrences(of: "(?s)<!--.*?-->", with: " ", options: .regularExpression)
+        s = s.replacingOccurrences(of: "(?s)<[^>]+>", with: " ", options: .regularExpression)
+        for (entity, char) in [("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'")] {
+            s = s.replacingOccurrences(of: entity, with: char)
+        }
+        return s
     }
 }
 

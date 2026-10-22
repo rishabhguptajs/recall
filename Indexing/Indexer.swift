@@ -17,10 +17,17 @@ actor Indexer {
 
     // MARK: - Full scan
 
+    /// Bump when text extraction changes; text-like files are then re-read once (images aren't re-OCR'd).
+    static let extractVersion = "2"
+
     func fullScan() async {
         guard !scanning else { return }
         scanning = true
         defer { scanning = false }
+        if db.meta("extract_version") != Self.extractVersion {
+            db.invalidateStamps(kinds: ["text", "note", "code", "data", "web"])
+            db.setMeta("extract_version", Self.extractVersion)
+        }
 
         await updateStatus { $0.isIndexing = true; $0.phase = "Scanning"; $0.done = 0; $0.total = 0 }
 
@@ -64,6 +71,7 @@ actor Indexer {
                     let d = done
                     let count = db.itemCount()
                     await updateStatus { $0.done = d; $0.itemCount = count }
+                    await EmbeddingWorker.shared.kick()
                 }
             }
 
@@ -94,7 +102,7 @@ actor Indexer {
         if extracted.text.count > Extractors.maxTextLength {
             extracted.text = String(extracted.text.prefix(Extractors.maxTextLength))
         }
-        let hash = Self.sha256(extracted.text + "|" + c.url.lastPathComponent)
+        let hash = Self.sha256(extracted.kind + "|" + extracted.text + "|" + c.url.lastPathComponent)
         if let s = existing, s.hash == hash {
             try? db.touch(path: path, modifiedAt: c.modifiedAt, size: c.size)
             return false
@@ -166,7 +174,7 @@ actor Indexer {
         case "pdf": "pdf"
         case "docx", "doc", "rtf", "rtfd", "odt", "pages": "document"
         case "png", "jpg", "jpeg", "heic", "heif", "tiff", "tif", "gif", "bmp", "webp": "image"
-        default: "text"
+        default: PlainTextExtractor.kind(for: url.pathExtension.lowercased())
         }
     }
 

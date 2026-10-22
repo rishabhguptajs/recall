@@ -46,6 +46,12 @@ final class ClipboardWatcher {
         }
     }
 
+    /// Only web and mail links are treated as links (and ever opened); anything else is stored as text.
+    static func isSafeLink(_ s: String) -> Bool {
+        guard let scheme = URL(string: s)?.scheme?.lowercased() else { return false }
+        return ["http", "https", "mailto"].contains(scheme)
+    }
+
     /// Reads the pasteboard on the main thread (cheap); heavy work happens later on a background queue.
     private func capture() -> ClipboardStore.Captured? {
         guard let item = pasteboard.pasteboardItems?.first else { return nil }
@@ -57,14 +63,13 @@ final class ClipboardWatcher {
         if types.contains(NSPasteboard.PasteboardType.fileURL.rawValue) { return nil }
 
         if let s = item.string(forType: .URL) ?? item.string(forType: NSPasteboard.PasteboardType("public.url")),
-           let url = URL(string: s), url.scheme != nil {
-            return .url(url.absoluteString)
+           Self.isSafeLink(s) {
+            return .url(s)
         }
         if let s = item.string(forType: .string) {
             let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
-            if !trimmed.contains(where: \.isWhitespace), let url = URL(string: trimmed),
-               let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) {
+            if !trimmed.contains(where: \.isWhitespace), Self.isSafeLink(trimmed) {
                 return .url(trimmed)
             }
             return .text(String(s.prefix(Self.maxTextLength)))

@@ -42,12 +42,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         IndexStatus.shared.itemCount = AppDatabase.shared.itemCount()
         startWatching()
         startClipboard()
-        Task.detached(priority: .utility) { await Indexer.shared.fullScan() }
+        Task.detached(priority: .utility) {
+            await EmbeddingWorker.shared.updatePendingCount()
+            await EmbeddingWorker.shared.kick()
+            await Indexer.shared.fullScan()
+            VectorIndex.shared.reload() // drops vectors of deleted items
+            await EmbeddingWorker.shared.kick()
+        }
     }
 
     private lazy var watcher = FolderWatcher { [weak self] paths in
         Task.detached(priority: .utility) {
             if await Indexer.shared.handleChanges(paths) {
+                await EmbeddingWorker.shared.kick()
                 await MainActor.run { self?.panel.indexDidChange() }
             }
         }
@@ -65,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func updateClipboardWatching() {
         if Preferences.clipboardEnabled {
             clipboard.onStored = { [weak self] in
+                Task { await EmbeddingWorker.shared.kick() }
                 IndexStatus.shared.itemCount = AppDatabase.shared.itemCount()
                 self?.panel.indexDidChange()
             }
@@ -108,6 +116,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func togglePause() {
         let paused = !IndexStatus.shared.isPaused
-        Task { await Indexer.shared.setPaused(paused) }
+        Task {
+            await Indexer.shared.setPaused(paused)
+            await EmbeddingWorker.shared.setPaused(paused)
+        }
     }
 }

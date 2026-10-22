@@ -48,6 +48,12 @@ final class DebugBridge {
         case "key": panel.debugKey(arg)
         case "snapshot": if let url = Self.outputURL(arg) { panel.debugSnapshot(to: url) }
         case "state": if let url = Self.outputURL(arg) { panel.debugState(to: url) }
+        case "explain": // explain <file.json> <query>
+            let p = arg.split(separator: " ", maxSplits: 1).map(String.init)
+            if p.count == 2, let url = Self.outputURL(p[0]),
+               let data = try? JSONSerialization.data(withJSONObject: SearchEngine.shared.explain(p[1]), options: .prettyPrinted) {
+                try? data.write(to: url)
+            }
         default: NSLog("DebugBridge: unknown command \(raw)")
         }
     }

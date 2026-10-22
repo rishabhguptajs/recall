@@ -96,7 +96,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         if r.source == .clipboard {
             let meta = AppDatabase.shared.metadata(itemId: r.id) ?? [:]
             hide()
-            if let s = meta["url"] as? String, let url = URL(string: s) {
+            if let s = meta["url"] as? String, ClipboardWatcher.isSafeLink(s), let url = URL(string: s) {
                 NSWorkspace.shared.open(url)
             } else if let path = meta["image"] as? String {
                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
