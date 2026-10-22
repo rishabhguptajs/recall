@@ -21,6 +21,7 @@ enum RecallMain {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let panel = SearchPanelController()
+    private let settings = SettingsWindowController()
     private let statusMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let pauseMenuItem = NSMenuItem(title: "Pause Indexing", action: #selector(togglePause), keyEquivalent: "")
     #if DEBUG
@@ -41,7 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         IndexStatus.shared.itemCount = AppDatabase.shared.itemCount()
         startWatching()
-        NotificationCenter.default.addObserver(self, selector: #selector(foldersChanged), name: .indexedFoldersChanged, object: nil)
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(foldersChanged), name: .indexedFoldersChanged, object: nil)
+        nc.addObserver(self, selector: #selector(clipboardSettingsChanged), name: .clipboardSettingsChanged, object: nil)
+        nc.addObserver(self, selector: #selector(clearAllData), name: .clearAllData, object: nil)
         startClipboard()
         Task.detached(priority: .utility) {
             await EmbeddingWorker.shared.updatePendingCount()
@@ -77,6 +81,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             await Indexer.shared.fullScan()
             await Indexer.shared.removeItemsOutsideIndexedFolders()
             VectorIndex.shared.reload()
+            await EmbeddingWorker.shared.kick()
+        }
+    }
+
+    @objc private func clipboardSettingsChanged() { updateClipboardWatching() }
+
+    /// Settings → Clear All Data: wipe the index, thumbnails and clipboard history, then re-index files.
+    @objc private func clearAllData() {
+        Task.detached(priority: .utility) {
+            try? AppDatabase.shared.deleteAll()
+            VectorIndex.shared.reload()
+            await MainActor.run {
+                IndexStatus.shared.itemCount = 0
+                IndexStatus.shared.embeddedCount = 0
+            }
+            await Indexer.shared.fullScan()
             await EmbeddingWorker.shared.kick()
         }
     }
@@ -119,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pauseMenuItem.target = self
         menu.addItem(pauseMenuItem)
         menu.addItem(.separator())
+        menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Quit Recall", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
     }
@@ -130,6 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func openSearch() { panel.show() }
+
+    @objc func openSettings() { settings.show() }
 
     @objc private func togglePause() {
         let paused = !IndexStatus.shared.isPaused

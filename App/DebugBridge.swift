@@ -1,11 +1,13 @@
 #if DEBUG
 import AppKit
+import ServiceManagement
 
 /// Debug-only test hook so the app can be driven from the terminal
 /// (`swift scripts/recall-debug.swift <command> [arg]`). Not compiled into Release builds, and only active
 /// when launched with `open --env RECALL_DEBUG_BRIDGE=1`. Output files go to
 /// ~/Library/Application Support/Recall/debug/ (the argument is a plain file name, never a path).
 /// Commands: toggle | show | hide | esc | query <text> | key <name> | snapshot <name.png> | state <name.json>
+@MainActor
 final class DebugBridge {
     static let notification = Notification.Name("dev.recall.debug")
     private let panel: SearchPanelController
@@ -48,6 +50,23 @@ final class DebugBridge {
         case "key": panel.debugKey(arg)
         case "snapshot": if let url = Self.outputURL(arg) { panel.debugSnapshot(to: url) }
         case "state": if let url = Self.outputURL(arg) { panel.debugState(to: url) }
+        case "filter": panel.model.filter = ItemSource(rawValue: arg)
+        case "settings":
+            (NSApp.delegate as? AppDelegate)?.openSettings()
+            if !arg.isEmpty { NotificationCenter.default.post(name: .showSettingsTab, object: arg) }
+        case "settingsSnapshot":
+            if let url = Self.outputURL(arg), let w = NSApp.windows.first(where: { $0.title == "Recall Settings" }),
+               let view = w.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: url)
+            }
+        case "login": // login on|off|status <file.json>
+            let p = arg.split(separator: " ").map(String.init)
+            if p.first == "on" { try? SMAppService.mainApp.register() }
+            if p.first == "off" { try? SMAppService.mainApp.unregister() }
+            if p.count == 2, let url = Self.outputURL(p[1]) {
+                try? "\(SMAppService.mainApp.status.rawValue)".write(to: url, atomically: true, encoding: .utf8)
+            }
         case "explain": // explain <file.json> <query>
             let p = arg.split(separator: " ", maxSplits: 1).map(String.init)
             if p.count == 2, let url = Self.outputURL(p[0]),

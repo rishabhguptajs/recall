@@ -6,6 +6,8 @@ final class SearchModel: ObservableObject {
     @Published var query = ""
     @Published private(set) var results: [SearchResult] = []
     @Published var selection = 0
+    /// Tab filter; a /s /c /f token typed in the query takes precedence.
+    @Published var filter: ItemSource?
     /// Bumped each time the panel opens so the field grabs focus.
     @Published var focusToken = 0
 
@@ -19,6 +21,13 @@ final class SearchModel: ObservableObject {
             .debounce(for: .milliseconds(150), scheduler: DispatchQueue.main)
             .sink { [weak self] in self?.run($0) }
             .store(in: &cancellables)
+        $filter
+            .dropFirst()
+            .sink { [weak self] f in
+                guard let self else { return }
+                self.run(self.query, filter: f)
+            }
+            .store(in: &cancellables)
     }
 
     var selected: SearchResult? { results.indices.contains(selection) ? results[selection] : nil }
@@ -31,11 +40,12 @@ final class SearchModel: ObservableObject {
     /// Re-runs the current query (e.g. after the index changed).
     func refresh() { run(query) }
 
-    private func run(_ text: String) {
+    private func run(_ text: String, filter: ItemSource?? = nil) {
         generation += 1
         let gen = generation
+        let source = filter ?? self.filter
         queue.async { [weak self] in
-            let found = SearchEngine.shared.search(text)
+            let found = SearchEngine.shared.search(text, filter: source)
             DispatchQueue.main.async {
                 guard let self, gen == self.generation else { return }
                 self.results = found
@@ -62,7 +72,11 @@ struct SearchView: View {
                     .focused($fieldFocused)
             }
             .padding(.horizontal, 18)
-            .padding(.vertical, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 10)
+            FilterTabs(selection: $model.filter)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 8)
             Divider()
             if model.results.isEmpty {
                 Spacer()
@@ -155,6 +169,32 @@ struct SourceBadge: View {
         case .file: .blue
         case .screenshot: .purple
         case .clipboard: .orange
+        }
+    }
+}
+
+struct FilterTabs: View {
+    @Binding var selection: ItemSource?
+
+    private let tabs: [(String, ItemSource?)] = [("All", nil), ("Files", .file), ("Screenshots", .screenshot), ("Clipboard", .clipboard)]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(tabs, id: \.0) { label, source in
+                Button { selection = source } label: {
+                    Text(label)
+                        .font(.system(size: 12, weight: selection == source ? .semibold : .regular))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(selection == source ? Color.accentColor.opacity(0.22) : .clear, in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+            Text("↑↓ select · ↩ open · ⌘↩ reveal · ⌘C copy · ⌘Y preview")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
         }
     }
 }

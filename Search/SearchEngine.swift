@@ -50,8 +50,9 @@ final class SearchEngine {
         "is", "it", "my", "i", "me", "from", "at", "by", "as", "was", "be", "some", "thing", "one",
     ]
 
-    func search(_ raw: String, limit: Int = 40) -> [SearchResult] {
-        let q = ParsedQuery(raw)
+    func search(_ raw: String, filter: ItemSource? = nil, limit: Int = 40) -> [SearchResult] {
+        var q = ParsedQuery(raw)
+        if q.source == nil { q.source = filter }
         let terms = q.terms
         guard !terms.isEmpty else { return [] }
         let keyword = keywordSearch(terms: terms, source: q.source, limit: limit)
