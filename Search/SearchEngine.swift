@@ -55,11 +55,13 @@ final class SearchEngine {
         if q.source == nil { q.source = filter }
         let terms = q.terms
         guard !terms.isEmpty else { return [] }
-        let keyword = keywordSearch(terms: terms, source: q.source, limit: limit)
         var vector: [VectorIndex.Hit] = []
         if let embedder = Embedding.shared, let qv = embedder.embed(q.text) {
-            vector = VectorIndex.shared.search(qv, source: q.source, limit: limit, minScore: Self.minSimilarity)
+            vector = VectorIndex.shared.search(qv, source: q.source, limit: limit, minScore: embedder.minSimilarity)
         }
+        // Partial-word keyword matches only fill in when meaning search found nothing: with a real
+        // sentence model they mostly add noise (e.g. every screenshot containing just "table").
+        let keyword = keywordSearch(terms: terms, source: q.source, limit: limit, allowLoose: vector.isEmpty)
         return load(fuse(keyword: keyword, vector: vector), limit: limit)
     }
 
@@ -80,8 +82,6 @@ final class SearchEngine {
         ]
     }
 
-    /// Meaning matches weaker than this are dropped (vectors are centered, so unrelated text is ~0).
-    static let minSimilarity: Float = 0.12
 
     // MARK: - Keyword (FTS5)
 
@@ -97,10 +97,12 @@ final class SearchEngine {
     static let looseFallbackThreshold = 5
 
     /// All-terms match first, then any-term match (minus stopwords) to fill up the list.
-    func keywordSearch(terms: [String], source: ItemSource?, limit: Int) -> [Hit] {
-        let quoted = terms.map { "\"\($0)\"" + ($0.count >= 2 ? "*" : "") }
+    func keywordSearch(terms: [String], source: ItemSource?, limit: Int, allowLoose: Bool = true) -> [Hit] {
+        // Require every meaningful word; filler words ("about", "the", …) are ignored unless that's all there is.
+        let meaningful = terms.filter { !Self.stopwords.contains($0) }
+        let quoted = (meaningful.isEmpty ? terms : meaningful).map { "\"\($0)\"" + ($0.count >= 2 ? "*" : "") }
         var hits = runFTS(quoted.joined(separator: " "), source: source, limit: limit)
-        if hits.count < Self.looseFallbackThreshold {
+        if allowLoose && hits.count < Self.looseFallbackThreshold {
             let loose = terms.filter { !Self.stopwords.contains($0) }
             if loose.count > 1 || (loose.count == 1 && loose.count < terms.count) {
                 let orQuery = loose.map { "\"\($0)\"" + ($0.count >= 2 ? "*" : "") }.joined(separator: " OR ")

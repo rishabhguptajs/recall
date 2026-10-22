@@ -6,6 +6,8 @@ import NaturalLanguage
 protocol Embedder: AnyObject {
     var id: String { get }
     var dimension: Int { get }
+    /// Meaning matches below this cosine similarity are dropped (each model has its own scale).
+    var minSimilarity: Float { get }
     func embed(_ text: String) -> [Float]?
 }
 
@@ -17,6 +19,7 @@ protocol Embedder: AnyObject {
 final class ContextualEmbedder: Embedder {
     let id: String
     let dimension: Int
+    let minSimilarity: Float = 0.12
     private let model: NLContextualEmbedding
     private let lock = NSLock()
     private var mean: [Double] = []
@@ -106,6 +109,7 @@ final class ContextualEmbedder: Embedder {
 final class WordVectorEmbedder: Embedder {
     let id: String
     let dimension: Int
+    let minSimilarity: Float = 0.12
     private let model: NLEmbedding
     private let lock = NSLock()
     private var mean: [Double] = []
@@ -170,5 +174,5 @@ final class WordVectorEmbedder: Embedder {
 
 /// The shared embedder, or nil if no on-device model is available.
 enum Embedding {
-    static let shared: Embedder? = WordVectorEmbedder() ?? ContextualEmbedder()
+    static let shared: Embedder? = MiniLMEmbedder() ?? WordVectorEmbedder() ?? ContextualEmbedder()
 }

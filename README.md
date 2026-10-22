@@ -43,21 +43,26 @@ Each query runs two searches and merges them:
 
 The two lists are merged with Reciprocal Rank Fusion (k = 60), plus a small boost for recent items.
 
-**About meaning-search quality.** Vectors come from Apple's built-in models, which need no download.
+**Meaning-search model.** Recall bundles **all-MiniLM-L6-v2**, a sentence-embedding model converted to
+Core ML (`Embedding/Models/MiniLM.mlpackage`, 43 MB, 16-bit). It ships inside the app and runs on the CPU,
+so nothing is downloaded at runtime.
 
-- **The default embedder** averages Apple's English word vectors (`NLEmbedding`), minus a fixed
-  "average text" vector. On a 12-query test it ranked the right document first 11 of 12 times,
-  against 7 of 12 for mean-pooled `NLContextualEmbedding`. It is also about 8× faster to compute and smaller (300 dimensions).
-- **It's a rough topic match, not real sentence understanding.** On a real Mac it works for queries
-  like "billing plans" or "bill to pay". It can't reliably connect "pricing table" to a screenshot
-  that only says "Plans & Billing $29/mo".
-- **A dedicated sentence model** (for example all-MiniLM or bge-small converted to Core ML) would do much
-  better. It plugs in behind the `Embedder` protocol (`Embedding/Embedder.swift`), but it needs a one-time model download.
+- **Speed:** about 1 ms per query and about 4 ms per 256-token chunk.
+- **Tokenizer:** a Swift WordPiece tokenizer (`Embedding/WordPieceTokenizer.swift`). It matches the original token
+  for token, and the vectors match the original model at 0.9999+ similarity.
+- **Accuracy:** on a 12-query test it ranks the right document first 12 of 12 times. Apple's built-in word vectors
+  get 11 of 12, and `NLContextualEmbedding` 7 of 12.
+- **On a real Mac (~280 screenshots):** `/s pricing table` puts a screenshot that only says
+  "Plans & Billing $29/mo" first. With the built-in word vectors it ranked 35th.
+- **Rebuilding the model:** run `scripts/convert_minilm.py` against a local copy of the Hugging Face model.
+- **Fallback:** if the model is missing, Recall falls back to the built-in word-vector embedder.
 - **Code and data files** (JS, JSON, CSV…) are keyword-only, so they don't drown out real meaning matches.
+- **Partial-word matches:** keyword results that match only some of the query words are used only when meaning search finds nothing.
 
 ## Build & run
 
 Requirements: macOS 14+, Apple Silicon, Xcode (full app, not just Command Line Tools), XcodeGen.
+(Only for regenerating the model: Python 3.12 with `torch==2.7.0`, `transformers==4.46.3`, `coremltools`, `sentence-transformers==3.3.1`.)
 
 ```bash
 brew install xcodegen
@@ -90,17 +95,19 @@ Deleting an item removes its thumbnail too. **Settings → Data → Clear All Da
 
 ## Performance
 
-Measured on an Apple Silicon Mac, Debug build, about 1,400 items / 59,000 chunks:
+Measured on an Apple Silicon Mac with about 1,400 items / 59,000 chunks:
 
 | Check | Target | Measured |
 | --- | --- | --- |
-| Idle memory (physical footprint) | < 150 MB | ~60 MB |
-| Search latency, keyword + meaning | < 100 ms on 50k chunks | 5–16 ms typical, 52 ms worst (1-letter query) |
+| Idle memory (physical footprint, model loaded) | < 150 MB | ~62 MB |
+| Search latency, keyword + meaning | < 100 ms on 50k chunks | ~5.5 ms typical, 67 ms worst (1-letter query) |
 | Meaning search alone | | 8 ms over 50k vectors, 31 ms over 200k |
 | Indexing CPU | no spikes | ≤ ~90% of one core (of 10), utility priority, then idle |
+| First-time meaning indexing | | ~160 chunks/s (about 6 min for 59k chunks) |
 | New screenshot → searchable | ~5 s | under 1 s |
+| App size / DMG | | 50 MB app, 43 MB DMG |
 
-Vectors are held in memory as Float32 at 1.2 KB per chunk (about 60 MB at 50k embedded chunks).
+Vectors are held in memory as Float32 at 1.5 KB per chunk (about 75 MB at 50k embedded chunks).
 Storing them as Float16 would halve that if indexes grow much larger.
 
 ## Code layout
@@ -126,4 +133,4 @@ See `App/DebugBridge.swift` and `scripts/recall-debug.swift`.
 - Browser history (Chrome, Arc, Safari)
 - Screen "time machine" capture with app exclusions
 - An "Ask" mode that answers questions across results
-- A stronger embedding model via Core ML
+- A multilingual embedding model (the bundled one is English-only)

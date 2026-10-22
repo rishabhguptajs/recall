@@ -96,7 +96,7 @@ final class DebugBridge {
                     var times: [Double] = []
                     for _ in 0..<10 {
                         let t = CFAbsoluteTimeGetCurrent()
-                        _ = index.search(q, source: nil, limit: 40, minScore: SearchEngine.minSimilarity)
+                        _ = index.search(q, source: nil, limit: 40, minScore: 0.25)
                         times.append((CFAbsoluteTimeGetCurrent() - t) * 1000)
                     }
                     times.sort()
@@ -104,6 +104,25 @@ final class DebugBridge {
                 }
                 if let data = try? JSONSerialization.data(withJSONObject: out) { try? data.write(to: url) }
             }
+        case "embed": // embed <file.json> <text>: embedder id, token ids (MiniLM) and vector
+            let p = arg.split(separator: " ", maxSplits: 1).map(String.init)
+            guard p.count == 2, let url = Self.outputURL(p[0]), let e = Embedding.shared else { break }
+            let text = p[1].replacingOccurrences(of: "\\n", with: "\n")
+            var out: [String: Any] = ["id": e.id, "embedding": (e.embed(text) ?? []).map(Double.init)]
+            if let m = e as? MiniLMEmbedder { out["ids"] = m.tokenIds(text).map(Int.init) }
+            let t = CFAbsoluteTimeGetCurrent()
+            for _ in 0..<20 { _ = e.embed(text) }
+            out["ms_per_embed"] = (CFAbsoluteTimeGetCurrent() - t) * 1000 / 20
+            if let data = try? JSONSerialization.data(withJSONObject: out) { try? data.write(to: url) }
+        case "status": // status <file.json>: folders the app sees + indexing state
+            guard let url = Self.outputURL(arg) else { break }
+            let st = IndexStatus.shared
+            let out: [String: Any] = [
+                "folders": Preferences.indexedFolders.map(\.path),
+                "isIndexing": st.isIndexing, "phase": st.phase, "done": st.done, "total": st.total,
+                "denied": st.deniedFolders.map(\.path), "items": st.itemCount,
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: out, options: .prettyPrinted) { try? data.write(to: url) }
         case "explain": // explain <file.json> <query>
             let p = arg.split(separator: " ", maxSplits: 1).map(String.init)
             if p.count == 2, let url = Self.outputURL(p[0]),
