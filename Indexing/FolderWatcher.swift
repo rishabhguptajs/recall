@@ -11,10 +11,20 @@ final class FolderWatcher {
         self.onChange = onChange
     }
 
-    deinit { stop() }
+    deinit { stopOnQueue() }
 
+    /// Starts watching on a background queue: creating the stream touches the folders, which can
+    /// block on a macOS privacy prompt (Desktop/Documents/Downloads) and must never freeze the UI.
     func start(folders: [URL], latency: TimeInterval = 0.5) {
-        stop()
+        queue.async { [weak self] in self?.startOnQueue(folders: folders, latency: latency) }
+    }
+
+    func stop() {
+        queue.async { [weak self] in self?.stopOnQueue() }
+    }
+
+    private func startOnQueue(folders: [URL], latency: TimeInterval) {
+        stopOnQueue()
         guard !folders.isEmpty else { return }
         var context = FSEventStreamContext(
             version: 0, info: Unmanaged.passUnretained(self).toOpaque(),
@@ -27,7 +37,7 @@ final class FolderWatcher {
             watcher.onChange(list)
         }
         let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes
-                           | kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagWatchRoot)
+                           | kFSEventStreamCreateFlagNoDefer)
         guard let s = FSEventStreamCreate(
             kCFAllocatorDefault, callback, &context, folders.map(\.path) as CFArray,
             FSEventStreamEventId(kFSEventStreamEventIdSinceNow), latency, flags
@@ -37,7 +47,7 @@ final class FolderWatcher {
         stream = s
     }
 
-    func stop() {
+    private func stopOnQueue() {
         guard let s = stream else { return }
         FSEventStreamStop(s)
         FSEventStreamInvalidate(s)
