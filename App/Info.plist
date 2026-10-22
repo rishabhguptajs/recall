@@ -24,11 +24,18 @@
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSDesktopFolderUsageDescription</key>
 	<string>Recall indexes files on your Desktop so you can search them. Nothing leaves your Mac.</string>
 	<key>NSDocumentsFolderUsageDescription</key>
 	<string>Recall indexes your Documents so you can search them. Nothing leaves your Mac.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
 	<string>Recall indexes your Downloads so you can search them. Nothing leaves your Mac.</string>
+	<key>RecallLicenseServer</key>
+	<string>$(RECALL_LICENSE_SERVER)</string>
 </dict>
 </plist>

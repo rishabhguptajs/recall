@@ -5,3 +5,10 @@ DerivedData/
 xcuserdata/
 .DS_Store
 *.sqlite
+# Secrets: signing certificate and license signing key (back these up, never commit them)
+keys/
+*.p12
+*.pem
+server/.dev.vars
+server/.wrangler/
+server/node_modules/

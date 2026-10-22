@@ -37,6 +37,19 @@ enum Preferences {
             NotificationCenter.default.post(name: .indexedFoldersChanged, object: nil)
         }
     }
+
+    /// The folders actually indexed and watched. Free covers the default folders; extra folders
+    /// need Pro. The saved list is never trimmed, so activating Pro brings extra folders back.
+    static var activeFolders: [URL] {
+        let all = indexedFolders
+        guard !Pro.isActive else { return all }
+        let defaults = Set(defaultFolders.map { $0.standardizedFileURL.path })
+        return all.filter { defaults.contains($0.standardizedFileURL.path) }
+    }
+
+    static func isDefaultFolder(_ url: URL) -> Bool {
+        defaultFolders.contains { $0.standardizedFileURL.path == url.standardizedFileURL.path }
+    }
 }
 
 extension Preferences {

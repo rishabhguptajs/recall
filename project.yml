@@ -14,7 +14,7 @@ targets:
   Recall:
     type: application
     platform: macOS
-    sources: [App, UI, Indexing, Search, Storage, Embedding]
+    sources: [App, UI, Indexing, Search, Storage, Embedding, Licensing]
     dependencies:
       - package: GRDB
       - package: KeyboardShortcuts
@@ -29,6 +29,9 @@ targets:
         NSDesktopFolderUsageDescription: Recall indexes files on your Desktop so you can search them. Nothing leaves your Mac.
         NSDocumentsFolderUsageDescription: Recall indexes your Documents so you can search them. Nothing leaves your Mac.
         NSDownloadsFolderUsageDescription: Recall indexes your Downloads so you can search them. Nothing leaves your Mac.
+        RecallLicenseServer: $(RECALL_LICENSE_SERVER)
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.recall.Recall
@@ -38,3 +41,9 @@ targets:
         CODE_SIGN_STYLE: Manual
         SWIFT_VERSION: "5.0"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
+      configs:
+        # Debug talks to `wrangler dev` on this Mac; Release to the deployed Worker.
+        Debug:
+          RECALL_LICENSE_SERVER: http://127.0.0.1:8787
+        Release:
+          RECALL_LICENSE_SERVER: https://recall-license.REPLACE-ME.workers.dev

@@ -4,7 +4,33 @@ A private "search my whole Mac" app for macOS. Press **⌥Space**, type somethin
 ("pdf about visa rules", "that link about rust async", "billing plans screenshot") and Recall
 finds it across your files, screenshots and clipboard history.
 
-Everything stays on your Mac: no cloud, no account, no network calls, no telemetry.
+Everything stays on your Mac: no cloud, no account, no telemetry. Your files, searches and clipboard
+never leave it. The only network request is the Pro license check (see [Free and Pro](#free-and-pro)).
+
+## Free and Pro
+
+| | Free | Pro |
+| --- | --- | --- |
+| File search (keyword + meaning) in Desktop, Documents, Downloads | ✓ | ✓ |
+| Clipboard history search | last 7 days | everything kept |
+| Screenshot text search | | ✓ |
+| Extra folders | | ✓ |
+| Keep clipboard for 90 days / 1 year | | ✓ |
+
+**Nothing is deleted when Pro is off.** Screenshots stay indexed and older clipboard items stay stored; they are only
+hidden. Activating Pro brings them back instantly.
+
+**How activation works** (Settings → License):
+1. Entering a key contacts the license server once. It sends the key and an anonymous device ID (a salted
+   SHA-256 of the Mac's hardware UUID). Each key works on 3 Macs.
+2. The server returns a token signed with Ed25519. The app checks the signature offline with the public key it
+   ships with, and the token is tied to this Mac.
+3. About every 30 days the app quietly re-checks.
+   - Offline or server down: nothing changes.
+   - Server says the key was revoked or this Mac was deactivated: back to Free.
+4. "Deactivate This Mac" frees the slot.
+
+Free users never contact the server. The server code is in [`server/`](server/README.md).
 
 ## What it searches
 
@@ -71,16 +97,42 @@ CONFIG=Release ./scripts/build.sh   # Release build
 open ~/Applications/Recall.app
 ```
 
+**Signing.** Run `./scripts/make-signing-cert.sh` once.
+- It creates a self-signed "Recall Developer" code-signing certificate in your login keychain, and a backup at
+  `keys/recall-signing.p12` (git-ignored, password `recall`). **Back that file up.**
+- `build.sh` signs every build with it, so macOS ties folder permissions to the certificate instead of to one build.
+  Without it, every update would ask for folder access again.
+- If you lose the file, your users have to re-approve folder access once after the next update.
+- The first time `codesign` uses the key, macOS may ask for permission. Click **Always Allow**.
+
 `build.sh` runs `xcodegen generate` (`project.yml` → `Recall.xcodeproj`), then `xcodebuild`. It copies the app to
 `~/Applications/Recall.app` (set `INSTALL=0` to skip that). Package versions are pinned in `project.yml`:
 GRDB 7.11.1 and KeyboardShortcuts 2.4.0.
+
+## Releasing (without an Apple Developer account)
+
+```bash
+./scripts/make-dmg.sh               # Release build, signed, → build/Recall-<version>.dmg
+```
+
+Before the first release, deploy the license server and set its URL in `project.yml` (see `server/README.md`).
+
+The app isn't notarized, so macOS blocks it the first time. Put these steps on the download page
+(macOS 15 Sequoia and later; Control-click → Open no longer works there):
+1. Drag Recall to Applications and open it. macOS says it can't verify the app. Click **Done**.
+2. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to "Recall was blocked".
+   The button appears for about an hour after step 1.
+3. Enter your password, then click **Open**.
+
+macOS only asks once. Updates signed with the same certificate open normally, and folder permissions carry over.
 
 ## Permissions
 
 - **Desktop, Documents, Downloads:** macOS asks the first time Recall indexes each one. Click **Allow**.
   If you clicked Don't Allow, Settings → Folders marks the folder. To fix it, open
   **System Settings → Privacy & Security → Files and Folders → Recall**, turn the folders on, then quit and reopen Recall.
-- **Re-asking after rebuilds:** local builds are signed ad hoc, so each rebuild looks like a new app to macOS and it may ask again.
+- **Re-asking after rebuilds:** builds signed with the "Recall Developer" certificate keep their permissions across
+  rebuilds and updates. Ad-hoc builds (no certificate installed) look like a new app each time, so macOS asks again.
 - **Launch at login:** if macOS asks, approve Recall in **System Settings → General → Login Items**.
 - **Not needed:** Accessibility, Screen Recording, Full Disk Access (optional, if you want folders outside your home folder).
 
@@ -119,8 +171,10 @@ Indexing/   folder scanner, FSEvents watcher, one extractor per source type
             (plain text, PDF, rich documents, images/OCR), clipboard watcher, indexer
 Search/     keyword (FTS5) + vector search, RRF ranking
 Storage/    GRDB database and schema
-Embedding/  Embedder protocol, word-vector and contextual embedders, background worker
-scripts/    build script and dev helpers
+Embedding/  Embedder protocol, MiniLM, word-vector and contextual embedders, background worker
+Licensing/  Pro: signed-token check, device ID, activation/re-check/deactivation
+server/     license server (Cloudflare Worker + D1)
+scripts/    build, DMG, signing certificate and dev helpers
 ```
 
 **Debug test hook.** Debug builds can be driven from the terminal, for automated checks without

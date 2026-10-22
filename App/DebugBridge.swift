@@ -129,6 +129,40 @@ final class DebugBridge {
                let data = try? JSONSerialization.data(withJSONObject: SearchEngine.shared.explain(p[1]), options: .prettyPrinted) {
                 try? data.write(to: url)
             }
+        case "license": // license <file.json>: Pro state as the app sees it
+            guard let url = Self.outputURL(arg) else { break }
+            let lm = LicenseManager.shared
+            var out: [String: Any] = ["pro": Pro.isActive, "device": DeviceID.current,
+                                      "server": LicenseManager.serverURL?.absoluteString ?? "none",
+                                      "activeFolders": Preferences.activeFolders.map(\.path),
+                                      "savedFolders": Preferences.indexedFolders.map(\.path)]
+            if let t = lm.token {
+                out["licenseId"] = t.licenseId
+                out["recheckAfter"] = t.recheckAfter.timeIntervalSince1970
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: out, options: .prettyPrinted) { try? data.write(to: url) }
+        case "activate": // activate <file.json> <key>: writes "ok" or the error message
+            let p = arg.split(separator: " ", maxSplits: 1).map(String.init)
+            guard p.count == 2, let url = Self.outputURL(p[0]) else { break }
+            Task { @MainActor in
+                var result = "ok"
+                do { try await LicenseManager.shared.activate(key: p[1]) } catch { result = error.localizedDescription }
+                try? result.write(to: url, atomically: true, encoding: .utf8)
+            }
+        case "deactivate": // deactivate <file.txt>
+            guard let url = Self.outputURL(arg) else { break }
+            Task { @MainActor in
+                var result = "ok"
+                do { try await LicenseManager.shared.deactivate() } catch { result = error.localizedDescription }
+                try? result.write(to: url, atomically: true, encoding: .utf8)
+            }
+        case "recheck": LicenseManager.shared.refreshIfDue(force: true)
+        case "search": // search <file.json> <query>: titles + sources of what the panel would show
+            let p = arg.split(separator: " ", maxSplits: 1).map(String.init)
+            guard p.count == 2, let url = Self.outputURL(p[0]) else { break }
+            let results = SearchEngine.shared.search(p[1]).map { "\($0.source.rawValue): \($0.title)" }
+            let out: [String: Any] = ["results": results, "locked": SearchEngine.isLockedQuery(p[1], filter: nil)]
+            if let data = try? JSONSerialization.data(withJSONObject: out, options: .prettyPrinted) { try? data.write(to: url) }
         default: NSLog("DebugBridge: unknown command \(raw)")
         }
     }

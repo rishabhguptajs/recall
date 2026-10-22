@@ -78,7 +78,11 @@ struct SearchView: View {
                 .padding(.horizontal, 14)
                 .padding(.bottom, 8)
             Divider()
-            if model.results.isEmpty {
+            if SearchEngine.isLockedQuery(model.query, filter: model.filter) {
+                Spacer()
+                ProUpsell()
+                Spacer()
+            } else if model.results.isEmpty {
                 Spacer()
                 Text(model.query.isEmpty ? "Type to search files, screenshots and clipboard" : "No results")
                     .foregroundStyle(.secondary)
@@ -110,6 +114,24 @@ struct SearchView: View {
             .onChange(of: model.selection) {
                 if let r = model.selected { proxy.scrollTo(r.id) }
             }
+        }
+    }
+}
+
+/// Shown instead of results when Free users filter to screenshots.
+struct ProUpsell: View {
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "photo.on.rectangle.angled").font(.system(size: 28)).foregroundStyle(.secondary)
+            Text("Screenshot search is part of Recall Pro").font(.headline)
+            Text("Your screenshots are already indexed on this Mac. Activate Pro to search the text in them.")
+                .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
+            Button("Activate Pro…") {
+                (NSApp.delegate as? AppDelegate)?.openSettings()
+                NotificationCenter.default.post(name: .showSettingsTab, object: SettingsTab.license.rawValue)
+            }
+            .padding(.top, 4)
         }
     }
 }

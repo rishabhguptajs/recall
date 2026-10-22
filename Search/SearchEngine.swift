@@ -62,7 +62,26 @@ final class SearchEngine {
         // Partial-word keyword matches only fill in when meaning search found nothing: with a real
         // sentence model they mostly add noise (e.g. every screenshot containing just "table").
         let keyword = keywordSearch(terms: terms, source: q.source, limit: limit, allowLoose: vector.isEmpty)
-        return load(fuse(keyword: keyword, vector: vector), limit: limit)
+        let results = load(fuse(keyword: keyword, vector: vector), limit: Pro.isActive ? limit : limit * 3)
+        return Self.visible(results, pro: Pro.isActive).prefix(limit).map { $0 }
+    }
+
+    /// Free hides (never deletes) screenshots and clipboard items older than 7 days.
+    static func visible(_ results: [SearchResult], pro: Bool, now: Date = Date()) -> [SearchResult] {
+        guard !pro else { return results }
+        let cutoff = now.addingTimeInterval(-Double(Pro.freeClipboardDays) * 86_400)
+        return results.filter { r in
+            switch r.source {
+            case .screenshot: false
+            case .clipboard: r.date >= cutoff
+            default: true
+            }
+        }
+    }
+
+    /// True when the query or tab asks for screenshots but Pro is off (the panel explains why it's empty).
+    static func isLockedQuery(_ raw: String, filter: ItemSource?) -> Bool {
+        !Pro.isActive && (ParsedQuery(raw).source ?? filter) == .screenshot
     }
 
     /// Debug: raw keyword and meaning hits for a query.

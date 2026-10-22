@@ -28,7 +28,7 @@ final class SettingsWindowController {
 }
 
 enum SettingsTab: String, CaseIterable {
-    case general = "General", folders = "Folders", clipboard = "Clipboard", data = "Data"
+    case general = "General", folders = "Folders", clipboard = "Clipboard", data = "Data", license = "License"
 }
 
 struct SettingsView: View {
@@ -41,13 +41,14 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 380)
+            .frame(width: 460)
             Group {
                 switch tab {
                 case .general: GeneralSettings()
                 case .folders: FolderSettings()
                 case .clipboard: ClipboardSettings()
                 case .data: DataSettings()
+                case .license: LicenseSettings()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -103,6 +104,7 @@ struct FolderSettings: View {
     @State private var folders = Preferences.indexedFolders
     @State private var selection: URL?
     @ObservedObject private var status = IndexStatus.shared
+    @ObservedObject private var license = LicenseManager.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -113,6 +115,10 @@ struct FolderSettings: View {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 18, height: 18)
                     Text(url.path.replacingOccurrences(of: Preferences.home.path, with: "~"))
                     Spacer()
+                    if !license.isPro && !Preferences.isDefaultFolder(url) {
+                        Text("Pro").font(.caption.bold()).foregroundStyle(.secondary)
+                            .help("Extra folders are indexed with Recall Pro")
+                    }
                     if status.deniedFolders.contains(where: { $0.path == url.path }) {
                         Label("No access", systemImage: "exclamationmark.triangle.fill")
                             .font(.caption).foregroundStyle(.orange)
@@ -120,8 +126,13 @@ struct FolderSettings: View {
                 }
             }
             .frame(height: 230)
+            if !license.isPro {
+                Text("Recall Free indexes Desktop, Documents, Downloads and your screenshot folder. Adding other folders needs Pro.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
             HStack {
-                Button("Add Folder…", action: addFolder)
+                Button(license.isPro ? "Add Folder…" : "Add Folder… (Pro)", action: addFolder)
+                    .disabled(!license.isPro)
                 Button("Remove") {
                     guard let s = selection else { return }
                     folders.removeAll { $0 == s }
@@ -171,6 +182,7 @@ struct ClipboardSettings: View {
     @State private var enabled = Preferences.clipboardEnabled
     @State private var days = Preferences.clipboardRetentionDays
     @State private var confirmClear = false
+    @ObservedObject private var license = LicenseManager.shared
 
     var body: some View {
         Form {
@@ -183,8 +195,8 @@ struct ClipboardSettings: View {
                 Text("1 day").tag(1)
                 Text("7 days").tag(7)
                 Text("30 days").tag(30)
-                Text("90 days").tag(90)
-                Text("1 year").tag(365)
+                Text(license.isPro ? "90 days" : "90 days (Pro)").tag(90).selectionDisabled(!license.isPro)
+                Text(license.isPro ? "1 year" : "1 year (Pro)").tag(365).selectionDisabled(!license.isPro)
             }
             .disabled(!enabled)
             .onChange(of: days) {
@@ -193,6 +205,10 @@ struct ClipboardSettings: View {
             }
             Text("Text, links and images you copy are stored on this Mac only. Items that password managers mark as concealed are never stored.")
                 .font(.callout).foregroundStyle(.secondary)
+            if !license.isPro {
+                Text("Recall Free searches the last \(Pro.freeClipboardDays) days of clipboard history. Older items are kept (for as long as you chose above) and become searchable with Pro.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
             Button("Clear Clipboard History…") { confirmClear = true }
                 .confirmationDialog("Delete all clipboard history?", isPresented: $confirmClear) {
                     Button("Delete", role: .destructive) {
@@ -229,7 +245,7 @@ struct DataSettings: View {
                 }
             }
             Section {
-                Text("Everything Recall stores (the search index, thumbnails and clipboard history) lives in ~/Library/Application Support/Recall. Nothing is ever sent off this Mac.")
+                Text("Everything Recall stores (the search index, thumbnails and clipboard history) lives in ~/Library/Application Support/Recall. None of it is ever sent off this Mac.")
                     .font(.callout).foregroundStyle(.secondary)
                 Button("Clear All Data…", role: .destructive) { confirmClear = true }
                     .confirmationDialog("Clear all Recall data?", isPresented: $confirmClear) {
@@ -242,5 +258,75 @@ struct DataSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+// MARK: - License
+
+struct LicenseSettings: View {
+    @ObservedObject private var license = LicenseManager.shared
+    @State private var keyInput = ""
+    @State private var message: String?
+    @State private var confirmDeactivate = false
+
+    var body: some View {
+        Form {
+            if let token = license.token {
+                LabeledContent("Status") { Label("Recall Pro", systemImage: "checkmark.seal.fill").foregroundStyle(.green) }
+                LabeledContent("License key", value: Self.masked(license.key ?? ""))
+                LabeledContent("Last verified", value: token.issuedAt.formatted(date: .abbreviated, time: .omitted))
+                Button("Deactivate This Mac…") { confirmDeactivate = true }
+                    .disabled(license.busy)
+                    .confirmationDialog("Deactivate Recall Pro on this Mac?", isPresented: $confirmDeactivate) {
+                        Button("Deactivate", role: .destructive) { run { try await license.deactivate() } }
+                    } message: {
+                        Text("This frees the slot so you can use your key on another Mac. Nothing is deleted; Pro items are hidden until you activate again.")
+                    }
+            } else {
+                LabeledContent("Status", value: "Recall Free")
+                Section {
+                    Text("Pro adds screenshot text search, your full clipboard history, longer retention and extra folders.")
+                        .font(.callout)
+                    TextField("License key", text: $keyInput, prompt: Text("RCL-XXXXX-XXXXX-XXXXX-XXXXX"))
+                        .font(.system(.body, design: .monospaced))
+                        .onSubmit(activate)
+                    HStack {
+                        Button("Activate", action: activate)
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(keyInput.trimmingCharacters(in: .whitespaces).isEmpty || license.busy)
+                        if license.busy { ProgressView().controlSize(.small) }
+                    }
+                }
+            }
+            if let message {
+                Text(message).font(.callout).foregroundStyle(.orange)
+            }
+            Section("Privacy") {
+                Text("Recall contacts its license server only when you activate or deactivate, and about once a month while Pro is active to re-check the key. It sends the license key and an anonymous ID for this Mac (a one-way hash), nothing else: no files, searches, clipboard or usage data. Recall Free never contacts the server. If you're offline, Pro keeps working.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func activate() {
+        let key = keyInput
+        run {
+            try await license.activate(key: key)
+            keyInput = ""
+        }
+    }
+
+    private func run(_ action: @escaping @MainActor () async throws -> Void) {
+        message = nil
+        Task { @MainActor in
+            do { try await action() } catch { message = error.localizedDescription }
+        }
+    }
+
+    /// RCL-ABCDE-…-WXYZ0: enough to recognise the key without showing all of it.
+    static func masked(_ key: String) -> String {
+        guard key.count > 10 else { return key }
+        return String(key.prefix(9)) + "…" + String(key.suffix(5))
     }
 }

@@ -41,11 +41,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         #endif
 
         IndexStatus.shared.itemCount = AppDatabase.shared.itemCount()
+        LicenseManager.shared.start() // before scanning: Pro decides which folders are indexed
         startWatching()
         let nc = NotificationCenter.default
         nc.addObserver(self, selector: #selector(foldersChanged), name: .indexedFoldersChanged, object: nil)
         nc.addObserver(self, selector: #selector(clipboardSettingsChanged), name: .clipboardSettingsChanged, object: nil)
         nc.addObserver(self, selector: #selector(clearAllData), name: .clearAllData, object: nil)
+        nc.addObserver(self, selector: #selector(licenseChanged), name: .licenseChanged, object: nil)
         startClipboard()
         Task.detached(priority: .utility) {
             await EmbeddingWorker.shared.updatePendingCount()
@@ -68,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Watches every indexed folder (plus the screenshot folder) for live updates.
     private func startWatching() {
-        var folders = Preferences.indexedFolders
+        var folders = Preferences.activeFolders
         if !folders.contains(where: { $0.path == Preferences.screenshotFolder.path }) {
             folders.append(Preferences.screenshotFolder)
         }
@@ -87,6 +89,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func clipboardSettingsChanged() { updateClipboardWatching() }
+
+    /// Pro turned on or off: extra folders start or stop being indexed, and results are re-filtered.
+    @objc private func licenseChanged() {
+        foldersChanged()
+        panel.indexDidChange()
+    }
 
     /// Settings → Clear All Data: wipe the index, thumbnails and clipboard history, then re-index files.
     @objc private func clearAllData() {

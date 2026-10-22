@@ -47,7 +47,7 @@ actor Indexer {
         var seen = Set<String>()
         var done = 0
         var total = 0
-        for folder in Preferences.indexedFolders {
+        for folder in Preferences.activeFolders {
             await updateStatus { $0.phase = "Scanning \(folder.lastPathComponent)" }
             // Listing runs off the actor: it can block on a macOS permission prompt, and the
             // watcher's changes must still get through meanwhile.
@@ -139,7 +139,7 @@ actor Indexer {
 
     /// Drops file items whose folder was removed from the indexed folders.
     func removeItemsOutsideIndexedFolders() async {
-        let roots = Preferences.indexedFolders.map { $0.path.hasSuffix("/") ? $0.path : $0.path + "/" }
+        let roots = Preferences.activeFolders.map { $0.path.hasSuffix("/") ? $0.path : $0.path + "/" }
         for path in db.allFilePaths() where !roots.contains(where: { path.hasPrefix($0) }) {
             try? db.deleteItem(path: path)
         }
@@ -151,7 +151,7 @@ actor Indexer {
     /// Returns true if anything in the index changed.
     @discardableResult
     func handleChanges(_ paths: [String]) async -> Bool {
-        let roots = Preferences.indexedFolders.map { $0.path.hasSuffix("/") ? $0.path : $0.path + "/" }
+        let roots = Preferences.activeFolders.map { $0.path.hasSuffix("/") ? $0.path : $0.path + "/" }
         var changed = false
         for path in Set(paths) {
             guard let root = roots.first(where: { path.hasPrefix($0) }),
