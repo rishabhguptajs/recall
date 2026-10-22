@@ -78,6 +78,14 @@ async function activate(request, env) {
   const licenseKeyId = res.body.license_key_id || "dodo";
   if (typeof instanceId !== "string") throw new UpstreamError("no instance id");
 
+  // Dodo's public endpoints accept keys for ANY Dodo merchant's product, so only keys for
+  // Recall's own product(s) count. Anything else: undo the activation and refuse the key.
+  if (!isOurProduct(env, res.body)) {
+    await dodo(env, "/licenses/deactivate", { license_key: input.key, license_key_instance_id: instanceId })
+      .catch(() => {});
+    return json({ error: "invalid_key" }, 404);
+  }
+
   await env.DB.prepare(
     `INSERT OR REPLACE INTO activations (key_hash, device, instance_id, license_key_id, activated_at, last_seen)
      VALUES (?, ?, ?, ?, ?, ?)`
@@ -117,6 +125,19 @@ async function deactivate(request, env) {
 }
 
 // MARK: - Dodo Payments
+
+/**
+ * DODO_PRODUCT_IDS: comma-separated product IDs that unlock Pro (required).
+ * DODO_BUSINESS_ID: your business ID (optional extra check).
+ * Fails closed: if DODO_PRODUCT_IDS isn't set, no key is accepted.
+ */
+function isOurProduct(env, body) {
+  const allowed = String(env.DODO_PRODUCT_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const product = body && body.product && body.product.product_id;
+  if (!allowed.length || !allowed.includes(product)) return false;
+  if (env.DODO_BUSINESS_ID && body.business_id !== env.DODO_BUSINESS_ID) return false;
+  return true;
+}
 
 class UpstreamError extends Error {}
 

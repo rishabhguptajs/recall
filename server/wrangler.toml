@@ -5,6 +5,11 @@ compatibility_date = "2026-01-01"
 [vars]
 # Dodo Payments license API. Use https://test.dodopayments.com while testing with test-mode keys.
 DODO_API_BASE = "https://live.dodopayments.com"
+# Product ID(s) of Recall Pro in your Dodo dashboard (pdt_…), comma-separated. Required: keys
+# for any other product, including other merchants' products, are refused.
+DODO_PRODUCT_IDS = "REPLACE_WITH_YOUR_PRODUCT_ID"
+# Optional extra check: your Dodo business ID.
+DODO_BUSINESS_ID = ""
 
 # Create the database with `wrangler d1 create recall-license` and paste its id here.
 [[d1_databases]]

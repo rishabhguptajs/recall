@@ -5,7 +5,7 @@
 //   set DODO_API_BASE=http://127.0.0.1:8788 in server/.dev.vars, then `wrangler dev`
 //
 // Test helpers (not part of Dodo):
-//   POST /mock/keys {limit}        -> {key}      new active key (like a purchase)
+//   POST /mock/keys {limit, product, business} -> {key}   new active key (like a purchase)
 //   POST /mock/disable {key}                     like a refund
 //   POST /mock/remove-instance {id}              like removing a device in the dashboard
 //   GET  /mock/state                             everything, for checking
@@ -26,8 +26,8 @@ const routes = {
     const id = "lki_" + randomUUID().slice(0, 8);
     k.instances.set(id, name);
     return [201, {
-      id, business_id: "bus_mock", name, license_key_id: k.id, created_at: new Date().toISOString(),
-      product: { product_id: "pdt_mock", name: "Recall Pro" },
+      id, business_id: k.business, name, license_key_id: k.id, created_at: new Date().toISOString(),
+      product: { product_id: k.product, name: "Some product" },
       customer: { customer_id: "cus_mock", name: "Test Buyer", email: "buyer@example.com", phone_number: null },
     }];
   },
@@ -44,9 +44,10 @@ const routes = {
     k.instances.delete(license_key_instance_id);
     return [200, {}];
   },
-  "POST /mock/keys": ({ limit = 3 }) => {
+  "POST /mock/keys": ({ limit = 3, product = "pdt_mock", business = "bus_mock" }) => {
     const key = randomUUID();
-    keys.set(key, { id: "lic_" + randomUUID().slice(0, 8), status: "active", limit, instances: new Map() });
+    keys.set(key, { id: "lic_" + randomUUID().slice(0, 8), status: "active", limit, product, business,
+                    instances: new Map() });
     return [200, { key }];
   },
   "POST /mock/disable": ({ key }) => {

@@ -24,7 +24,13 @@ removed in the Dodo dashboard, turns Pro off.
 2. **Activations limit:** 3. **License length:** No expiration.
 3. Optional: add an activation message, for example "Open Recall → Settings → License and paste this key."
    Dodo includes it in the email with the key.
-4. **To test first:** do all of this in **Test mode**, make a test purchase, and use that key.
+4. **Required:** copy the product's ID (`pdt_…`) into `DODO_PRODUCT_IDS` in `wrangler.toml`. Copy your business ID
+   into `DODO_BUSINESS_ID` too.
+   - Dodo's license endpoints accept keys for any Dodo merchant's product, so this is what stops someone using a
+     key from another store.
+   - If `DODO_PRODUCT_IDS` isn't set, every key is refused.
+   - Test mode and live mode have different product IDs; list both if you want, separated by a comma.
+5. **To test first:** do all of this in **Test mode**, make a test purchase, and use that key.
    Set `DODO_API_BASE = "https://test.dodopayments.com"` in `wrangler.toml` while you do.
 
 ## Deploy (one time)
@@ -71,6 +77,8 @@ All of them are git-ignored. Keep them in a password manager or an encrypted bac
 ```
 SIGNING_KEY=<openssl pkey -in ../keys/license-signing.pem -outform DER | base64>
 DODO_API_BASE=http://127.0.0.1:8788
+DODO_PRODUCT_IDS=pdt_mock
+DODO_BUSINESS_ID=bus_mock
 ```
 
 ```bash
