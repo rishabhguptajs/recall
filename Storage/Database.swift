@@ -269,6 +269,10 @@ final class AppDatabase {
         return obj
     }
 
+    func allFilePaths() -> [String] {
+        (try? pool.read { try String.fetchAll($0, sql: "SELECT path FROM items WHERE path IS NOT NULL") }) ?? []
+    }
+
     func itemCount() -> Int {
         (try? pool.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM items") }) ?? 0
     }

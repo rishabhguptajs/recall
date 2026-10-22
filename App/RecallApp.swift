@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         IndexStatus.shared.itemCount = AppDatabase.shared.itemCount()
         startWatching()
+        NotificationCenter.default.addObserver(self, selector: #selector(foldersChanged), name: .indexedFoldersChanged, object: nil)
         startClipboard()
         Task.detached(priority: .utility) {
             await EmbeddingWorker.shared.updatePendingCount()
@@ -60,8 +61,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Watches every indexed folder (plus the screenshot folder) for live updates.
     private func startWatching() {
-        watcher.start(folders: [Preferences.screenshotFolder])
+        var folders = Preferences.indexedFolders
+        if !folders.contains(where: { $0.path == Preferences.screenshotFolder.path }) {
+            folders.append(Preferences.screenshotFolder)
+        }
+        watcher.start(folders: folders)
+    }
+
+    /// Called when the folder list changes in Settings.
+    @objc private func foldersChanged() {
+        startWatching()
+        Task.detached(priority: .utility) {
+            await Indexer.shared.fullScan()
+            await Indexer.shared.removeItemsOutsideIndexedFolders()
+            VectorIndex.shared.reload()
+            await EmbeddingWorker.shared.kick()
+        }
     }
 
     // MARK: - Clipboard

@@ -20,10 +20,20 @@ actor Indexer {
     /// Bump when text extraction changes; text-like files are then re-read once (images aren't re-OCR'd).
     static let extractVersion = "2"
 
+    private var rescanRequested = false
+
+    /// Scans all indexed folders. If a scan is already running, another pass runs after it.
     func fullScan() async {
-        guard !scanning else { return }
+        if scanning { rescanRequested = true; return }
         scanning = true
-        defer { scanning = false }
+        repeat {
+            rescanRequested = false
+            await scanOnce()
+        } while rescanRequested
+        scanning = false
+    }
+
+    private func scanOnce() async {
         if db.meta("extract_version") != Self.extractVersion {
             db.invalidateStamps(kinds: ["text", "note", "code", "data", "web"])
             db.setMeta("extract_version", Self.extractVersion)
@@ -127,6 +137,16 @@ actor Indexer {
         try? db.deleteItem(path: path)
     }
 
+    /// Drops file items whose folder was removed from the indexed folders.
+    func removeItemsOutsideIndexedFolders() async {
+        let roots = Preferences.indexedFolders.map { $0.path.hasSuffix("/") ? $0.path : $0.path + "/" }
+        for path in db.allFilePaths() where !roots.contains(where: { path.hasPrefix($0) }) {
+            try? db.deleteItem(path: path)
+        }
+        let count = db.itemCount()
+        await updateStatus { $0.itemCount = count }
+    }
+
     /// Handles paths reported by the folder watcher: index new/changed files, drop deleted ones.
     /// Returns true if anything in the index changed.
     @discardableResult
@@ -137,10 +157,27 @@ actor Indexer {
             guard let root = roots.first(where: { path.hasPrefix($0) }),
                   !FileScanner.isIgnored(path: path, under: root) else { continue }
             let url = URL(fileURLWithPath: path)
-            if FileManager.default.fileExists(atPath: path) {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: path, isDirectory: &isDir) {
                 if let c = FileScanner.candidate(for: url) {
                     await waitWhilePaused()
                     if await index(c) { changed = true }
+                } else if isDir.boolValue {
+                    // A folder appeared (moved or renamed in): index what's inside, drop what's gone.
+                    let listed = await Task.detached(priority: .utility) { () -> [FileScanner.Candidate] in
+                        var found: [FileScanner.Candidate] = []
+                        FileScanner.enumerate(url) { found.append($0) }
+                        return found
+                    }.value
+                    for c in listed {
+                        await waitWhilePaused()
+                        if await index(c) { changed = true }
+                    }
+                    let present = Set(listed.map(\.url.path))
+                    for p in (try? db.paths(under: path)) ?? [] where !present.contains(p) {
+                        try? db.deleteItem(path: p)
+                        changed = true
+                    }
                 }
             } else {
                 // A deleted file, or a deleted folder (drop everything under it).

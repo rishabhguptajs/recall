@@ -62,11 +62,46 @@ struct PlainTextExtractor: Extractor {
         }
     }
 
-    /// Readable text of an HTML page: drops scripts, styles and tags (no WebKit involved).
+    /// Readable text of an HTML page: drops scripts, styles, comments and tags.
+    /// Single linear pass (no regex backtracking, no WebKit).
     static func stripHTML(_ html: String) -> String {
-        var s = html.replacingOccurrences(of: "(?is)<(script|style|noscript|svg)[^>]*>.*?</\\1>", with: " ", options: .regularExpression)
-        s = s.replacingOccurrences(of: "(?s)<!--.*?-->", with: " ", options: .regularExpression)
-        s = s.replacingOccurrences(of: "(?s)<[^>]+>", with: " ", options: .regularExpression)
+        let src = Array(html.utf8)
+        var out = [UInt8]()
+        out.reserveCapacity(src.count / 2)
+        var i = 0
+        let n = src.count
+        let skipBlocks: [[UInt8]] = ["script", "style", "noscript", "svg"].map { Array($0.utf8) }
+
+        func lower(_ b: UInt8) -> UInt8 { (b >= 65 && b <= 90) ? b + 32 : b }
+        func matches(_ word: [UInt8], at pos: Int) -> Bool {
+            guard pos + word.count <= n else { return false }
+            for k in 0..<word.count where lower(src[pos + k]) != word[k] { return false }
+            return true
+        }
+        /// Index just past the first occurrence of `needle` (case-insensitive) from `pos`, or n.
+        func skipPast(_ needle: [UInt8], from pos: Int) -> Int {
+            var p = pos
+            while p < n {
+                if lower(src[p]) == needle[0] && matches(needle, at: p) { return p + needle.count }
+                p += 1
+            }
+            return n
+        }
+
+        while i < n {
+            let b = src[i]
+            if b != UInt8(ascii: "<") { out.append(b); i += 1; continue }
+            if matches(Array("<!--".utf8), at: i) {
+                i = skipPast(Array("-->".utf8), from: i + 4)
+            } else if let block = skipBlocks.first(where: { matches($0, at: i + 1) }) {
+                i = skipPast(Array("</".utf8) + block, from: i + 1)
+                i = skipPast([UInt8(ascii: ">")], from: i)
+            } else {
+                i = skipPast([UInt8(ascii: ">")], from: i + 1)
+            }
+            out.append(UInt8(ascii: " "))
+        }
+        var s = String(decoding: out, as: UTF8.self)
         for (entity, char) in [("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'")] {
             s = s.replacingOccurrences(of: entity, with: char)
         }
