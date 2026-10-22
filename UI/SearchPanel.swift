@@ -63,7 +63,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
 
     // MARK: - Keyboard
 
-    enum Action { case down, up, open, reveal, close }
+    enum Action { case down, up, open, reveal, copy, close }
 
     private func handleKey(_ e: NSEvent) -> Bool {
         let cmd = e.modifierFlags.contains(.command)
@@ -72,6 +72,10 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         case 126: perform(.up)
         case 36, 76: perform(cmd ? .reveal : .open)
         case 53: perform(.close)
+        case 8 where cmd: // ⌘C, unless the user is copying selected text in the search field
+            if let editor = panel.firstResponder as? NSTextView, editor.selectedRange().length > 0 { return false }
+            guard model.selected != nil else { return false }
+            perform(.copy)
         default: return false
         }
         return true
@@ -83,14 +87,39 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         case .up: model.move(-1)
         case .open: if let r = model.selected { open(r) }
         case .reveal: if let r = model.selected { reveal(r) }
+        case .copy: if let r = model.selected { copy(r) }
         case .close: hide()
         }
     }
 
     func open(_ r: SearchResult) {
+        if r.source == .clipboard {
+            let meta = AppDatabase.shared.metadata(itemId: r.id) ?? [:]
+            hide()
+            if let s = meta["url"] as? String, let url = URL(string: s) {
+                NSWorkspace.shared.open(url)
+            } else if let path = meta["image"] as? String {
+                NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            } else {
+                _ = ClipboardStore.copyToPasteboard(itemId: r.id) // text: Enter copies it
+            }
+            return
+        }
         guard let path = r.path else { return }
         hide()
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+
+    /// ⌘C: clipboard items go back on the clipboard; files are copied like in Finder.
+    func copy(_ r: SearchResult) {
+        if r.source == .clipboard {
+            _ = ClipboardStore.copyToPasteboard(itemId: r.id)
+        } else if let path = r.path {
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.writeObjects([URL(fileURLWithPath: path) as NSURL])
+        }
+        hide()
     }
 
     func reveal(_ r: SearchResult) {
@@ -111,6 +140,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         case "up": perform(.up)
         case "enter": perform(.open)
         case "cmdenter": perform(.reveal)
+        case "cmdc": perform(.copy)
         default: break
         }
     }

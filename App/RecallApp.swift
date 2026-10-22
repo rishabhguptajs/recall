@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         IndexStatus.shared.itemCount = AppDatabase.shared.itemCount()
         startWatching()
+        startClipboard()
         Task.detached(priority: .utility) { await Indexer.shared.fullScan() }
     }
 
@@ -54,6 +55,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func startWatching() {
         watcher.start(folders: [Preferences.screenshotFolder])
+    }
+
+    // MARK: - Clipboard
+
+    private let clipboard = ClipboardWatcher()
+    private var retentionTimer: Timer?
+
+    func updateClipboardWatching() {
+        if Preferences.clipboardEnabled {
+            clipboard.onStored = { [weak self] in
+                IndexStatus.shared.itemCount = AppDatabase.shared.itemCount()
+                self?.panel.indexDidChange()
+            }
+            clipboard.start()
+        } else {
+            clipboard.stop()
+        }
+    }
+
+    private func startClipboard() {
+        updateClipboardWatching()
+        let cleanup = { DispatchQueue.global(qos: .utility).async {
+            ClipboardStore.applyRetention(days: Preferences.clipboardRetentionDays)
+            AppDatabase.shared.sweepOrphanFiles()
+        } }
+        cleanup()
+        retentionTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in cleanup() }
     }
 
     private func buildMenu() -> NSMenu {

@@ -39,6 +39,19 @@ enum Preferences {
     }
 }
 
+extension Preferences {
+    static var clipboardEnabled: Bool {
+        get { defaults.object(forKey: "clipboardEnabled") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "clipboardEnabled") }
+    }
+
+    /// Days of clipboard history to keep.
+    static var clipboardRetentionDays: Int {
+        get { (defaults.object(forKey: "clipboardRetentionDays") as? Int) ?? 30 }
+        set { defaults.set(max(1, newValue), forKey: "clipboardRetentionDays") }
+    }
+}
+
 extension Notification.Name {
     static let indexedFoldersChanged = Notification.Name("indexedFoldersChanged")
 }

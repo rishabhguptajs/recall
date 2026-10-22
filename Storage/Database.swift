@@ -134,23 +134,42 @@ final class AppDatabase {
         }
     }
 
+    /// Deletes a file item and its thumbnail.
     func deleteItem(path: String) throws {
-        try pool.write { db in
+        let thumb = try pool.write { db -> String? in
+            let t = try String.fetchOne(db, sql: "SELECT thumbnail_path FROM items WHERE path = ?", arguments: [path])
             try db.execute(sql: "DELETE FROM items WHERE path = ?", arguments: [path])
+            return t
         }
+        if let thumb { try? FileManager.default.removeItem(atPath: thumb) }
     }
 
-    func deleteItems(ids: [Int64]) throws {
-        guard !ids.isEmpty else { return }
-        try pool.write { db in
-            for id in ids { try db.execute(sql: "DELETE FROM items WHERE id = ?", arguments: [id]) }
-        }
-    }
-
+    /// Deletes every item, plus all thumbnails and saved clipboard images.
     func deleteAll() throws {
         try pool.write { db in
             try db.execute(sql: "DELETE FROM items")
             try db.execute(sql: "DELETE FROM chunks_fts")
+        }
+        for dir in ["thumbs", "clips"] {
+            try? FileManager.default.removeItem(at: Self.supportDirectory.appendingPathComponent(dir))
+        }
+    }
+
+    /// Removes thumbnails and clipboard images that no item references any more.
+    func sweepOrphanFiles() {
+        let rows = (try? pool.read { try Row.fetchAll($0, sql: "SELECT thumbnail_path, metadata_json FROM items") }) ?? []
+        var referenced = Set<String>()
+        for r in rows {
+            if let t: String = r[0] { referenced.insert(t) }
+            if let image = Self.decode(r[1])["image"] as? String { referenced.insert(image) }
+        }
+        let fm = FileManager.default
+        for dir in ["thumbs", "clips"] {
+            let url = Self.supportDirectory.appendingPathComponent(dir)
+            for name in (try? fm.contentsOfDirectory(atPath: url.path)) ?? [] {
+                let path = url.appendingPathComponent(name).path
+                if !referenced.contains(path) { try? fm.removeItem(atPath: path) }
+            }
         }
     }
 
@@ -172,6 +191,45 @@ final class AppDatabase {
             try String.fetchAll(db, sql: "SELECT path FROM items WHERE path >= ? AND path < ?",
                                 arguments: [prefix, prefix + "\u{FFFF}"])
         }
+    }
+
+    // MARK: - Clipboard
+
+    /// If a clipboard item with this hash exists, moves it to `date` and returns true.
+    func bumpClipboardItem(hash: String, to date: Date) throws -> Bool {
+        try pool.write { db in
+            try db.execute(sql: "UPDATE items SET modified_at = ? WHERE source = 'clipboard' AND content_hash = ?",
+                           arguments: [date.timeIntervalSince1970, hash])
+            return db.changesCount > 0
+        }
+    }
+
+    struct ClipboardFiles { var imagePath: String?; var thumbnailPath: String? }
+
+    /// Deletes clipboard items last copied before `date`; returns their files so they can be removed.
+    func deleteClipboardItems(before date: Date) throws -> [ClipboardFiles] {
+        try pool.write { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT metadata_json, thumbnail_path FROM items WHERE source = 'clipboard' AND modified_at < ?
+                """, arguments: [date.timeIntervalSince1970])
+            try db.execute(sql: "DELETE FROM items WHERE source = 'clipboard' AND modified_at < ?",
+                           arguments: [date.timeIntervalSince1970])
+            return rows.map { row in
+                let meta = Self.decode(row[0])
+                return ClipboardFiles(imagePath: meta["image"] as? String, thumbnailPath: row[1])
+            }
+        }
+    }
+
+    func metadata(itemId: Int64) -> [String: Any]? {
+        let raw = try? pool.read { try String.fetchOne($0, sql: "SELECT metadata_json FROM items WHERE id = ?", arguments: [itemId]) }
+        return raw.flatMap { Self.decode($0) }
+    }
+
+    private static func decode(_ json: String?) -> [String: Any] {
+        guard let data = json?.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        return obj
     }
 
     func itemCount() -> Int {
