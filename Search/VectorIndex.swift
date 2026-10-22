@@ -81,6 +81,24 @@ final class VectorIndex {
         }
     }
 
+    #if DEBUG
+    /// Fills this (non-shared) index with random unit vectors for benchmarking.
+    func loadRandom(count: Int, dimension dim: Int) {
+        var m = [Float](repeating: 0, count: count * dim)
+        for r in 0..<count {
+            var norm: Float = 0
+            for c in 0..<dim { let x = Float.random(in: -1...1); m[r * dim + c] = x; norm += x * x }
+            norm = sqrt(norm)
+            for c in 0..<dim { m[r * dim + c] /= norm }
+        }
+        lock.withLock {
+            matrix = m; dimension = dim; loaded = true
+            chunkIds = (0..<count).map(Int64.init); itemIds = (0..<count).map { Int64($0 / 3) }
+            sources = [UInt8](repeating: 0, count: count)
+        }
+    }
+    #endif
+
     static func encode(_ v: [Float]) -> Data { v.withUnsafeBufferPointer { Data(buffer: $0) } }
 
     static func decode(_ d: Data) -> [Float] {

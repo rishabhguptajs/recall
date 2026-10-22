@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             await EmbeddingWorker.shared.updatePendingCount()
             await EmbeddingWorker.shared.kick()
             await Indexer.shared.fullScan()
+            await Indexer.shared.removeItemsOutsideIndexedFolders() // folders removed while not running
             VectorIndex.shared.reload() // drops vectors of deleted items
             await EmbeddingWorker.shared.kick()
         }

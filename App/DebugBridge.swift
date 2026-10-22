@@ -67,6 +67,43 @@ final class DebugBridge {
             if p.count == 2, let url = Self.outputURL(p[1]) {
                 try? "\(SMAppService.mainApp.status.rawValue)".write(to: url, atomically: true, encoding: .utf8)
             }
+        case "bench": // bench <file.json> <query>: times full searches (keyword + meaning + load)
+            let p = arg.split(separator: " ", maxSplits: 1).map(String.init)
+            guard p.count == 2, let url = Self.outputURL(p[0]) else { break }
+            let query = p[1]
+            DispatchQueue.global(qos: .userInitiated).async {
+                _ = SearchEngine.shared.search(query) // warm-up
+                var times: [Double] = []
+                for _ in 0..<20 {
+                    let t = CFAbsoluteTimeGetCurrent()
+                    _ = SearchEngine.shared.search(query)
+                    times.append((CFAbsoluteTimeGetCurrent() - t) * 1000)
+                }
+                times.sort()
+                let out: [String: Any] = ["query": query, "median_ms": times[10], "max_ms": times[19],
+                                          "vectors": VectorIndex.shared.count]
+                if let data = try? JSONSerialization.data(withJSONObject: out) { try? data.write(to: url) }
+            }
+        case "benchvec": // benchvec <file.json>: meaning search over 50k / 200k synthetic vectors
+            guard let url = Self.outputURL(arg) else { break }
+            DispatchQueue.global(qos: .userInitiated).async {
+                var out: [String: Any] = [:]
+                for n in [50_000, 200_000] {
+                    let index = VectorIndex()
+                    index.loadRandom(count: n, dimension: 300)
+                    var q = (0..<300).map { _ in Float.random(in: -1...1) }
+                    let norm = sqrt(q.reduce(0) { $0 + $1 * $1 }); q = q.map { $0 / norm }
+                    var times: [Double] = []
+                    for _ in 0..<10 {
+                        let t = CFAbsoluteTimeGetCurrent()
+                        _ = index.search(q, source: nil, limit: 40, minScore: SearchEngine.minSimilarity)
+                        times.append((CFAbsoluteTimeGetCurrent() - t) * 1000)
+                    }
+                    times.sort()
+                    out["\(n)_median_ms"] = times[5]
+                }
+                if let data = try? JSONSerialization.data(withJSONObject: out) { try? data.write(to: url) }
+            }
         case "explain": // explain <file.json> <query>
             let p = arg.split(separator: " ", maxSplits: 1).map(String.init)
             if p.count == 2, let url = Self.outputURL(p[0]),
