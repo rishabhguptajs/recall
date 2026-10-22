@@ -56,4 +56,4 @@ targets:
         Debug:
           RECALL_LICENSE_SERVER: http://127.0.0.1:8787
         Release:
-          RECALL_LICENSE_SERVER: https://recall-license.REPLACE-ME.workers.dev
+          RECALL_LICENSE_SERVER: https://recall-license.rishabhgupta4523.workers.dev

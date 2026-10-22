@@ -4,19 +4,24 @@ compatibility_date = "2026-01-01"
 
 [vars]
 # Dodo Payments license API. Use https://test.dodopayments.com while testing with test-mode keys.
-DODO_API_BASE = "https://live.dodopayments.com"
+# TEST MODE until the live product exists: switch to https://live.dodopayments.com and the live pdt_ ID.
+DODO_API_BASE = "https://test.dodopayments.com"
 # Product ID(s) of Recall Pro in your Dodo dashboard (pdt_…), comma-separated. Required: keys
 # for any other product, including other merchants' products, are refused.
-DODO_PRODUCT_IDS = "REPLACE_WITH_YOUR_PRODUCT_ID"
+DODO_PRODUCT_IDS = "pdt_0NqHtLmI13wkZX5waYjL9"
 # Optional extra check: your Dodo business ID.
-DODO_BUSINESS_ID = ""
+DODO_BUSINESS_ID = "bus_1cgSJSjzUOz80ZLKnljcJ"
 
-# Create the database with `wrangler d1 create recall-license` and paste its id here.
 [[d1_databases]]
 binding = "DB"
 database_name = "recall-license"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "e65eb386-14e7-4ab3-8ad2-506da751e2ed"
 migrations_dir = "migrations"
+
+# DMGs and appcast.xml, served by /download/… and /appcast.xml (upload with scripts/publish-release.sh).
+[[r2_buckets]]
+binding = "RELEASES"
+bucket_name = "recall-releases"
 
 # Secret (never in this file):
 #   wrangler secret put SIGNING_KEY   # base64 PKCS#8 Ed25519 private key, see server/README.md

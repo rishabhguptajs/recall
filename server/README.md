@@ -33,22 +33,49 @@ removed in the Dodo dashboard, turns Pro off.
 5. **To test first:** do all of this in **Test mode**, make a test purchase, and use that key.
    Set `DODO_API_BASE = "https://test.dodopayments.com"` in `wrangler.toml` while you do.
 
-## Deploy (one time)
+## Deployment
+
+Deployed at **https://recall-license.rishabhgupta4523.workers.dev** (Cloudflare account rishabhgupta4523@gmail.com):
+- D1 database `recall-license`
+- R2 bucket `recall-releases`
+- secrets `SIGNING_KEY` and `STATS_TOKEN`
+
+**Currently in Dodo test mode.** To go live:
+1. Create the live product in Dodo.
+2. In `wrangler.toml`, set `DODO_API_BASE = "https://live.dodopayments.com"` and put the live `pdt_…` ID in
+   `DODO_PRODUCT_IDS`. Check `DODO_BUSINESS_ID` too.
+3. Run `wrangler deploy`. Apps need no change: they only know the Worker's URL.
+
+Redeploying after a code change: `cd server && wrangler deploy`. A new migration: `wrangler d1 migrations apply recall-license --remote`.
+
+From scratch, on a new account:
 
 ```bash
-npm install -g wrangler
 wrangler login
 cd server
 wrangler d1 create recall-license          # copy the database_id it prints into wrangler.toml
 wrangler d1 migrations apply recall-license --remote
+wrangler r2 bucket create recall-releases
 openssl pkey -in ../keys/license-signing.pem -outform DER | base64 | wrangler secret put SIGNING_KEY
+openssl rand -hex 24 | tee ../keys/stats-token.txt | tr -d '\n' | wrangler secret put STATS_TOKEN
 wrangler deploy                             # prints https://recall-license.<you>.workers.dev
 ```
 
-Next:
-1. Put that URL into `project.yml` (`RECALL_LICENSE_SERVER` under `Release`).
-2. Build the DMG with `scripts/make-dmg.sh`.
-3. Before going live, set `DODO_API_BASE` back to `https://live.dodopayments.com` and run `wrangler deploy` again.
+Then put that URL into `project.yml` (`RECALL_LICENSE_SERVER` under `Release`) and into `RECALL_FILES` in the
+website's `next.config.ts`.
+
+## Downloads and numbers
+
+The Worker also serves `GET /appcast.xml`, `GET /download/latest` (redirects to the newest DMG) and
+`GET /download/Recall-<version>.dmg` from R2, with Range support. Nothing else in the bucket is reachable.
+Upload with `scripts/publish-release.sh`.
+
+It counts, per UTC day:
+- `download:<version>`: a full download, or the first chunk of a resumed one;
+- `update_check:<app version>`: an appcast fetch, with the version taken from Sparkle's User-Agent.
+
+No IPs or device data are stored. `GET /v1/stats` with `Authorization: Bearer <STATS_TOKEN>` returns the counts plus
+Pro activation numbers from `activations`. `scripts/stats.sh` prints them.
 
 ## Support cases
 
@@ -66,6 +93,7 @@ Everything is done in the Dodo Payments dashboard:
     Customers then re-enter their key once.
   - **If it's lost:** same fix.
 - `keys/recall-signing.p12` and `keys/recall-signing-password.txt` are the code-signing certificate (see the main README).
+- `keys/sparkle-private-key.txt` signs updates; `keys/stats-token.txt` unlocks the stats endpoint.
 
 All of them are git-ignored. Keep them in a password manager or an encrypted backup.
 

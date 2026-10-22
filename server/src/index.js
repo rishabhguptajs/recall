@@ -12,6 +12,15 @@
 //   POST /v1/validate    {key, device} -> {token}
 //   POST /v1/deactivate  {key, device} -> {ok}
 //
+// It also serves the app's downloads from the R2 bucket RELEASES (only these names, nothing else):
+//   GET /appcast.xml                 Sparkle update feed (raegent.com/recall/appcast.xml proxies it)
+//   GET /download/latest             redirects to the newest Recall-<version>.dmg
+//   GET /download/Recall-<v>.dmg     the DMG (supports Range, so interrupted downloads resume)
+//
+// Counting (anonymous, a number per day, nothing about the person): each DMG download and each
+// update check (by app version, from Sparkle's User-Agent). GET /v1/stats with
+// "Authorization: Bearer <STATS_TOKEN>" returns those counts plus Pro activation numbers.
+//
 // Errors the app acts on: invalid_key (404), revoked (403), not_activated (403), device_limit (409).
 // Any Dodo outage becomes upstream_error (502), which the app ignores (Pro keeps working).
 //
@@ -22,7 +31,7 @@ const DEVICE_RE = /^[0-9a-f]{64}$/;
 const DODO_TIMEOUT_MS = 10_000;
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     try {
       if (request.method === "POST") {
@@ -31,8 +40,11 @@ export default {
           case "/v1/validate": return await validate(request, env);
           case "/v1/deactivate": return await deactivate(request, env);
         }
-      } else if (request.method === "GET" && url.pathname === "/") {
-        return json({ ok: true, service: "recall-license" });
+      } else if (request.method === "GET" || request.method === "HEAD") {
+        if (url.pathname === "/") return json({ ok: true, service: "recall-license" });
+        if (url.pathname === "/v1/stats") return await stats(request, env);
+        const download = await serveRelease(request, env, url, ctx);
+        if (download) return download;
       }
       return json({ error: "not_found" }, 404);
     } catch (err) {
@@ -42,6 +54,107 @@ export default {
     }
   },
 };
+
+// MARK: - Downloads
+
+const DMG_RE = /^Recall-\d+(\.\d+){1,3}\.dmg$/;
+
+async function serveRelease(request, env, url, ctx) {
+  if (!env.RELEASES) return null;
+  if (url.pathname === "/download/latest") {
+    const latest = await latestDmg(env);
+    if (!latest) return json({ error: "not_found" }, 404);
+    return new Response(null, { status: 302, headers: { Location: `${url.origin}/download/${latest}`, "Cache-Control": "no-store" } });
+  }
+  let key = null, type = "", cache = "";
+  if (url.pathname === "/appcast.xml") {
+    key = "appcast.xml"; type = "application/xml; charset=utf-8"; cache = "public, max-age=300";
+  } else if (url.pathname.startsWith("/download/") && DMG_RE.test(url.pathname.slice(10))) {
+    key = url.pathname.slice(10); type = "application/x-apple-diskimage"; cache = "public, max-age=31536000, immutable";
+  }
+  if (!key) return null;
+  const range = parseRange(request.headers.get("Range"));
+  const object = request.method === "HEAD"
+    ? await env.RELEASES.head(key)
+    : await env.RELEASES.get(key, range ? { range } : {});
+  if (!object) return json({ error: "not_found" }, 404);
+  if (request.method === "GET" && ctx) {
+    if (key === "appcast.xml") {
+      const v = /Recall\/([\d.]+)/.exec(request.headers.get("User-Agent") ?? "")?.[1] ?? "unknown";
+      ctx.waitUntil(count(env, `update_check:${v}`));
+    } else if (!range || (range.offset ?? -1) === 0) {
+      ctx.waitUntil(count(env, `download:${key.slice(7, -4)}`)); // first chunk only, so resumes don't double count
+    }
+  }
+  const headers = new Headers({ "Content-Type": type, "Cache-Control": cache, "Accept-Ranges": "bytes", ETag: object.httpEtag });
+  if (type.startsWith("application/x-apple")) headers.set("Content-Disposition", `attachment; filename="${key}"`);
+  if (range && object.range && request.method !== "HEAD") {
+    const start = object.range.offset ?? 0;
+    const length = object.range.length ?? object.size - start;
+    headers.set("Content-Range", `bytes ${start}-${start + length - 1}/${object.size}`);
+    headers.set("Content-Length", String(length));
+    return new Response(object.body, { status: 206, headers });
+  }
+  headers.set("Content-Length", String(object.size));
+  return new Response(request.method === "HEAD" ? null : object.body, { headers });
+}
+
+function parseRange(header) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header ?? "");
+  if (!m || (m[1] === "" && m[2] === "")) return null;
+  if (m[1] === "") return { suffix: Number(m[2]) };
+  const offset = Number(m[1]);
+  return m[2] === "" ? { offset } : { offset, length: Number(m[2]) - offset + 1 };
+}
+
+async function latestDmg(env) {
+  const listed = await env.RELEASES.list({ prefix: "Recall-" });
+  const names = listed.objects.map((o) => o.key).filter((k) => DMG_RE.test(k));
+  const version = (k) => k.slice(7, -4).split(".").map(Number);
+  names.sort((a, b) => {
+    const x = version(a), y = version(b);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
+    return 0;
+  });
+  return names.at(-1) ?? null;
+}
+
+// MARK: - Counters
+
+async function count(env, name) {
+  try {
+    await env.DB.prepare(
+      "INSERT INTO counters (day, name, value) VALUES (?1, ?2, 1) ON CONFLICT (day, name) DO UPDATE SET value = value + 1",
+    ).bind(new Date().toISOString().slice(0, 10), name).run();
+  } catch (err) {
+    console.error("count failed", err); // counting must never break a download
+  }
+}
+
+async function stats(request, env) {
+  const token = env.STATS_TOKEN;
+  const auth = request.headers.get("Authorization") ?? "";
+  if (!token || !(await timingSafeEqual(auth, `Bearer ${token}`))) return json({ error: "unauthorized" }, 401);
+  const now = nowSeconds();
+  const totals = await env.DB.prepare("SELECT name, SUM(value) AS total FROM counters GROUP BY name ORDER BY name").all();
+  const days = await env.DB.prepare(
+    "SELECT day, name, value FROM counters WHERE day >= date('now', '-30 days') ORDER BY day DESC, name",
+  ).all();
+  const pro = await env.DB.prepare(
+    `SELECT COUNT(*) AS activations, COUNT(DISTINCT key_hash) AS licenses,
+            SUM(CASE WHEN last_seen >= ?1 THEN 1 ELSE 0 END) AS active_macs_35d
+     FROM activations`,
+  ).bind(now - 35 * 24 * 3600).first();
+  return json({ totals: totals.results, last_30_days: days.results, pro });
+}
+
+async function timingSafeEqual(a, b) {
+  const [x, y] = await Promise.all([a, b].map((v) => crypto.subtle.digest("SHA-256", new TextEncoder().encode(v))));
+  const u = new Uint8Array(x), w = new Uint8Array(y);
+  let diff = 0;
+  for (let i = 0; i < u.length; i++) diff |= u[i] ^ w[i];
+  return diff === 0;
+}
 
 // MARK: - Endpoints
 

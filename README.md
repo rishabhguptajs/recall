@@ -111,6 +111,7 @@ open ~/Applications/Recall.app
 - `build.sh` signs every build with it, so macOS ties folder permissions to the certificate instead of to one build.
   Without it, every update would ask for folder access again.
 - If you lose the file, your users have to re-approve folder access once after the next update.
+- `keys/stats-token.txt` unlocks `./scripts/stats.sh`. If lost, make a new one and run `wrangler secret put STATS_TOKEN`.
 - `keys/sparkle-private-key.txt` signs updates. If it's lost, already-installed copies can't verify new updates, and
   users must download the next version by hand. It's backed up together with the other keys.
 - The first time `codesign` uses the key, macOS may ask for permission. Click **Always Allow**.
@@ -150,12 +151,28 @@ Recall uses [Sparkle](https://sparkle-project.org) 2.
 - Every update is signed with Recall's EdDSA key (`SUPublicEDKey` in `project.yml`). Sparkle installs only updates with
   a valid signature that are also signed with the same "Recall Developer" certificate, so folder permissions carry over.
 
+**Where files live.** DMGs and `appcast.xml` are in the Cloudflare R2 bucket `recall-releases`, served by the
+license Worker (`/download/…`, `/appcast.xml`). raegent.com points at it:
+- `raegent.com/recall/download` redirects to the newest DMG;
+- `raegent.com/recall/download/<file>` redirects to that DMG;
+- `raegent.com/recall/appcast.xml` is proxied, so the address built into the app stays on raegent.com.
+
+A new release doesn't need a website deploy.
+
 **Publishing an update:**
 1. Raise `CFBundleShortVersionString` and `CFBundleVersion` in `project.yml`. Sparkle compares `CFBundleVersion`.
 2. Run `./scripts/make-dmg.sh`. It builds the DMG, copies it to `releases/` (git-ignored), and regenerates
    `releases/appcast.xml`, signing each DMG with `keys/sparkle-private-key.txt`.
-3. Upload the new DMG to the download folder (`RECALL_DOWNLOAD_BASE`), then replace `appcast.xml` on the website.
    Keep the older DMGs in `releases/` so the feed keeps their entries.
+3. Run `./scripts/publish-release.sh`. It uploads the DMG, then the feed.
+
+**Numbers.** `./scripts/stats.sh` prints:
+- downloads per version;
+- update checks per app version, from people who turned update checks on or clicked Check for Updates;
+- Pro licenses, activated Macs, and Macs seen in the last 35 days.
+
+The Worker only adds 1 to a per-day count; it stores no IPs or anything else about the person.
+`keys/stats-token.txt` is the password for the stats endpoint.
 
 **Testing an update locally (Debug builds):** serve a folder holding a DMG and an `appcast.xml` made with
 `generate_appcast --download-url-prefix http://127.0.0.1:8000/`, then launch with
