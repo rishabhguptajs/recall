@@ -49,7 +49,24 @@ struct PlainTextExtractor: Extractor {
         let ext = url.pathExtension.lowercased()
         var text = String(decoding: data, as: UTF8.self)
         if ext == "html" || ext == "htm" { text = Self.stripHTML(text) }
-        return Extracted(text: text, kind: Self.kind(for: ext))
+        let kind = Self.kind(for: ext)
+        if kind == "code" || kind == "data" { text = Self.capGenerated(text, fileName: url.lastPathComponent) }
+        return Extracted(text: text, kind: kind)
+    }
+
+    /// Code and data files are keyword-only. Index the first 50 KB of them (10 KB if minified,
+    /// e.g. one-line JS/CSS bundles), enough to find them by name and opening content without
+    /// storing megabytes of machine-generated text.
+    static let codeDataLimit = 50_000
+    static let minifiedLimit = 10_000
+
+    static func capGenerated(_ text: String, fileName: String) -> String {
+        guard text.utf8.count > minifiedLimit else { return text }
+        let sample = text.prefix(20_000)
+        let lines = max(1, sample.reduce(0) { $1 == "\n" ? $0 + 1 : $0 })
+        let minified = fileName.lowercased().contains(".min.") || sample.count / lines > 400
+        let limit = minified ? minifiedLimit : codeDataLimit
+        return text.count > limit ? String(text.prefix(limit)) : text
     }
 
     /// note = prose (meaning-searchable), web = saved page text, code/data = keyword search only.

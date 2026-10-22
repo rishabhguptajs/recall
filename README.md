@@ -44,6 +44,8 @@ Free users never contact the server. The server code is in [`server/`](server/RE
 
 Skipped: hidden folders, `.git`, `node_modules`, `.build`, `DerivedData`, `Library`, `venv`/`.venv`,
 `__pycache__`, files over 50 MB, and binaries.
+Code and data files (JS, CSS, JSON, CSV…) are searchable by name and their first 50 KB; minified bundles
+(one-line JS/CSS) by their first 10 KB.
 
 ## Using it
 
@@ -143,8 +145,19 @@ macOS only asks once. Updates signed with the same certificate open normally, an
 
 Everything is in `~/Library/Application Support/Recall/`:
 - `recall.sqlite` holds items, chunks, the FTS5 index and the vectors.
+  - Chunk text is stored once: the FTS5 index uses `chunks` as its external content table.
+  - Space from deleted items goes back to macOS through incremental auto-vacuum, run after each startup scan and hourly.
 - `thumbs/` holds image thumbnails.
 - `clips/` holds copied images.
+
+On the development Mac, about 1,400 items take **92 MB** (it was 268 MB before these storage changes):
+
+| Part | Size |
+| --- | --- |
+| Vectors | 32 MB |
+| Keyword index | 27 MB |
+| Text | 25 MB |
+| Thumbnails | 8 MB |
 
 Deleting an item removes its thumbnail too. **Settings → Data → Clear All Data** wipes everything, and your files then get indexed again.
 

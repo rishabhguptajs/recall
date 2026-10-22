@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             await Indexer.shared.removeItemsOutsideIndexedFolders() // folders removed while not running
             VectorIndex.shared.reload() // drops vectors of deleted items
             await EmbeddingWorker.shared.kick()
+            AppDatabase.shared.reclaimSpace() // give space from re-indexed/deleted items back
         }
     }
 
@@ -135,7 +136,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             AppDatabase.shared.sweepOrphanFiles()
         } }
         cleanup()
-        retentionTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in cleanup() }
+        retentionTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in
+            cleanup()
+            DispatchQueue.global(qos: .utility).async { AppDatabase.shared.reclaimSpace() }
+        }
     }
 
     private func buildMenu() -> NSMenu {

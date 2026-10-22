@@ -18,7 +18,8 @@ actor Indexer {
     // MARK: - Full scan
 
     /// Bump when text extraction changes; text-like files are then re-read once (images aren't re-OCR'd).
-    static let extractVersion = "2"
+    /// v3: code/data files capped (minified bundles, huge CSVs).
+    static let extractVersion = "3"
 
     private var rescanRequested = false
 

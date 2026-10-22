@@ -83,6 +83,30 @@ final class AppDatabase {
         m.registerMigration("v2-meta") { db in
             try db.execute(sql: "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
         }
+        // Store chunk text once: the keyword index reads text (and the item title, now kept on
+        // each chunk) from the chunks table instead of holding its own copy.
+        m.registerMigration("v3-external-fts") { db in
+            try db.execute(sql: """
+                DELETE FROM chunks WHERE item_id NOT IN (SELECT id FROM items); -- orphans from older versions
+                ALTER TABLE chunks ADD COLUMN title TEXT NOT NULL DEFAULT '';
+                UPDATE chunks SET title = COALESCE((SELECT title FROM items WHERE items.id = chunks.item_id), '');
+                DROP TRIGGER chunks_ad;
+                DROP TABLE chunks_fts;
+                CREATE VIRTUAL TABLE chunks_fts USING fts5(
+                    title, text, content = 'chunks', content_rowid = 'id', tokenize = 'porter unicode61');
+                INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild');
+                CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
+                    INSERT INTO chunks_fts(rowid, title, text) VALUES (new.id, new.title, new.text);
+                END;
+                CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
+                    INSERT INTO chunks_fts(chunks_fts, rowid, title, text) VALUES ('delete', old.id, old.title, old.text);
+                END;
+                CREATE TRIGGER chunks_au AFTER UPDATE ON chunks BEGIN
+                    INSERT INTO chunks_fts(chunks_fts, rowid, title, text) VALUES ('delete', old.id, old.title, old.text);
+                    INSERT INTO chunks_fts(rowid, title, text) VALUES (new.id, new.title, new.text);
+                END;
+                """)
+        }
         return m
     }
 
@@ -153,11 +177,9 @@ final class AppDatabase {
             // Always index at least the title so the item is findable by name.
             let pieces = chunks.isEmpty ? [""] : chunks
             for (i, text) in pieces.enumerated() {
-                try db.execute(sql: "INSERT INTO chunks (item_id, idx, text) VALUES (?, ?, ?)",
-                               arguments: [itemId, i, text])
-                let chunkId = db.lastInsertedRowID
-                try db.execute(sql: "INSERT INTO chunks_fts (rowid, title, text) VALUES (?, ?, ?)",
-                               arguments: [chunkId, f.title, text])
+                // The chunks_ai trigger adds it to the keyword index.
+                try db.execute(sql: "INSERT INTO chunks (item_id, idx, title, text) VALUES (?, ?, ?, ?)",
+                               arguments: [itemId, i, f.title, text])
             }
             return itemId
         }
@@ -184,8 +206,8 @@ final class AppDatabase {
     /// Deletes every item, plus all thumbnails and saved clipboard images.
     func deleteAll() throws {
         try pool.write { db in
-            try db.execute(sql: "DELETE FROM items")
-            try db.execute(sql: "DELETE FROM chunks_fts")
+            try db.execute(sql: "DELETE FROM items") // cascades to chunks; triggers clear the index
+            try db.execute(sql: "INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')")
         }
         for dir in ["thumbs", "clips"] {
             try? FileManager.default.removeItem(at: Self.supportDirectory.appendingPathComponent(dir))
@@ -207,6 +229,26 @@ final class AppDatabase {
                 let path = url.appendingPathComponent(name).path
                 if !referenced.contains(path) { try? fm.removeItem(atPath: path) }
             }
+        }
+    }
+
+    /// Gives disk space from deleted items back to macOS. The first call switches the database
+    /// to incremental auto-vacuum with a one-time VACUUM (a few seconds, in the background);
+    /// after that each call only frees pages left over from deletions.
+    func reclaimSpace() {
+        do {
+            let mode = try pool.read { try Int.fetchOne($0, sql: "PRAGMA auto_vacuum") } ?? 0
+            try pool.writeWithoutTransaction { db in
+                if mode != 2 {
+                    try db.execute(sql: "PRAGMA auto_vacuum = INCREMENTAL")
+                    try db.execute(sql: "VACUUM")
+                } else {
+                    try db.execute(sql: "PRAGMA incremental_vacuum")
+                }
+                try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+            }
+        } catch {
+            NSLog("Recall: reclaiming space failed: \(error)")
         }
     }
 
