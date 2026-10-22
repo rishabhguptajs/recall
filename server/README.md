@@ -40,11 +40,9 @@ Deployed at **https://recall-license.rishabhgupta4523.workers.dev** (Cloudflare 
 - R2 bucket `recall-releases`
 - secrets `SIGNING_KEY` and `STATS_TOKEN`
 
-**Currently in Dodo test mode.** To go live:
-1. Create the live product in Dodo.
-2. In `wrangler.toml`, set `DODO_API_BASE = "https://live.dodopayments.com"` and put the live `pdt_…` ID in
-   `DODO_PRODUCT_IDS`. Check `DODO_BUSINESS_ID` too.
-3. Run `wrangler deploy`. Apps need no change: they only know the Worker's URL.
+**Live** with product `pdt_0NqInUfKFr2xPXRo0axLw`. The Worker refuses test-mode Dodo unless `ALLOW_TEST_MODE=1`
+(set only in `server/.dev.vars` for `wrangler dev`), because test purchases are free.
+`DODO_BUSINESS_ID` is empty until the live business ID is confirmed; the product ID check already binds keys to Recall.
 
 Redeploying after a code change: `cd server && wrangler deploy`. A new migration: `wrangler d1 migrations apply recall-license --remote`.
 

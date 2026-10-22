@@ -246,6 +246,8 @@ async function deactivate(request, env) {
  * Fails closed: if DODO_PRODUCT_IDS isn't set, no key is accepted.
  */
 function isOurProduct(env, body) {
+  // Test-mode purchases are free, so a deployed Worker must never accept them.
+  if (/test\.dodopayments\.com/.test(env.DODO_API_BASE || "") && env.ALLOW_TEST_MODE !== "1") return false;
   const allowed = String(env.DODO_PRODUCT_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
   const product = body && body.product && body.product.product_id;
   if (!allowed.length || !allowed.includes(product)) return false;

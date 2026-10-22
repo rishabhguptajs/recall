@@ -4,13 +4,15 @@ compatibility_date = "2026-01-01"
 
 [vars]
 # Dodo Payments license API. Use https://test.dodopayments.com while testing with test-mode keys.
-# TEST MODE until the live product exists: switch to https://live.dodopayments.com and the live pdt_ ID.
-DODO_API_BASE = "https://test.dodopayments.com"
+# Live. For testing, use `wrangler dev` with DODO_API_BASE=https://test.dodopayments.com and the test
+# product ID in server/.dev.vars. Never deploy test mode: test purchases are free, so test keys would unlock Pro.
+DODO_API_BASE = "https://live.dodopayments.com"
 # Product ID(s) of Recall Pro in your Dodo dashboard (pdt_…), comma-separated. Required: keys
 # for any other product, including other merchants' products, are refused.
-DODO_PRODUCT_IDS = "pdt_0NqHtLmI13wkZX5waYjL9"
+DODO_PRODUCT_IDS = "pdt_0NqInUfKFr2xPXRo0axLw"
 # Optional extra check: your Dodo business ID.
-DODO_BUSINESS_ID = "bus_1cgSJSjzUOz80ZLKnljcJ"
+# Left empty until the live business ID is confirmed (the product ID check above already binds keys to Recall).
+DODO_BUSINESS_ID = ""
 
 [[d1_databases]]
 binding = "DB"
