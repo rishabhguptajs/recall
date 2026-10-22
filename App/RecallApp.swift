@@ -40,7 +40,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         #endif
 
         IndexStatus.shared.itemCount = AppDatabase.shared.itemCount()
+        startWatching()
         Task.detached(priority: .utility) { await Indexer.shared.fullScan() }
+    }
+
+    private lazy var watcher = FolderWatcher { [weak self] paths in
+        Task.detached(priority: .utility) {
+            if await Indexer.shared.handleChanges(paths) {
+                await MainActor.run { self?.panel.indexDidChange() }
+            }
+        }
+    }
+
+    private func startWatching() {
+        watcher.start(folders: [Preferences.screenshotFolder])
     }
 
     private func buildMenu() -> NSMenu {

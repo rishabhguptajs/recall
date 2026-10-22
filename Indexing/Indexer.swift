@@ -32,7 +32,10 @@ actor Indexer {
         var total = 0
         for folder in Preferences.indexedFolders {
             await updateStatus { $0.phase = "Scanning \(folder.lastPathComponent)" }
-            switch FileScanner.checkAccess(folder) {
+            // Listing runs off the actor: it can block on a macOS permission prompt, and the
+            // watcher's changes must still get through meanwhile.
+            let access = await Task.detached(priority: .utility) { FileScanner.checkAccess(folder) }.value
+            switch access {
             case .permissionDenied?:
                 denied.append(folder)
                 let deniedFolders = denied
@@ -41,10 +44,12 @@ actor Indexer {
             case .missing?: continue
             case nil: break
             }
-            var candidates: [FileScanner.Candidate] = []
-            FileScanner.enumerate(folder) { c in
-                if seen.insert(c.url.path).inserted { candidates.append(c) }
-            }
+            let listed = await Task.detached(priority: .utility) { () -> [FileScanner.Candidate] in
+                var found: [FileScanner.Candidate] = []
+                FileScanner.enumerate(folder) { found.append($0) }
+                return found
+            }.value
+            var candidates = listed.filter { seen.insert($0.url.path).inserted }
             // Newest first, so recent files become searchable soonest.
             candidates.sort { $0.modifiedAt > $1.modifiedAt }
             total += candidates.count
@@ -95,8 +100,9 @@ actor Indexer {
             return false
         }
 
+        let source: ItemSource = extracted.kind == "image" && ScreenshotDetector.isScreenshot(c.url) ? .screenshot : .file
         let fields = AppDatabase.ItemFields(
-            source: .file, path: path, title: c.url.lastPathComponent, kind: extracted.kind,
+            source: source, path: path, title: c.url.lastPathComponent, kind: extracted.kind,
             createdAt: c.createdAt, modifiedAt: c.modifiedAt, size: c.size, contentHash: hash,
             thumbnailPath: extracted.thumbnailPath, metadataJSON: nil)
         do {
@@ -113,6 +119,38 @@ actor Indexer {
         try? db.deleteItem(path: path)
     }
 
+    /// Handles paths reported by the folder watcher: index new/changed files, drop deleted ones.
+    /// Returns true if anything in the index changed.
+    @discardableResult
+    func handleChanges(_ paths: [String]) async -> Bool {
+        let roots = Preferences.indexedFolders.map { $0.path.hasSuffix("/") ? $0.path : $0.path + "/" }
+        var changed = false
+        for path in Set(paths) {
+            guard let root = roots.first(where: { path.hasPrefix($0) }),
+                  !FileScanner.isIgnored(path: path, under: root) else { continue }
+            let url = URL(fileURLWithPath: path)
+            if FileManager.default.fileExists(atPath: path) {
+                if let c = FileScanner.candidate(for: url) {
+                    await waitWhilePaused()
+                    if await index(c) { changed = true }
+                }
+            } else {
+                // A deleted file, or a deleted folder (drop everything under it).
+                let under = (try? db.paths(under: path)) ?? []
+                if (try? db.stamp(path: path)) != nil || !under.isEmpty {
+                    try? db.deleteItem(path: path)
+                    for p in under { try? db.deleteItem(path: p) }
+                    changed = true
+                }
+            }
+        }
+        if changed {
+            let count = db.itemCount()
+            await updateStatus { $0.itemCount = count }
+        }
+        return changed
+    }
+
     // MARK: - Helpers
 
     private func waitWhilePaused() async {
@@ -127,6 +165,7 @@ actor Indexer {
         switch url.pathExtension.lowercased() {
         case "pdf": "pdf"
         case "docx", "doc", "rtf", "rtfd", "odt", "pages": "document"
+        case "png", "jpg", "jpeg", "heic", "heif", "tiff", "tif", "gif", "bmp", "webp": "image"
         default: "text"
         }
     }

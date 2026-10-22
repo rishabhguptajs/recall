@@ -9,6 +9,9 @@ enum Preferences {
 
     /// Where macOS saves screenshots (`defaults read com.apple.screencapture location`), falling back to Desktop.
     static var screenshotFolder: URL {
+        if let custom = defaults.string(forKey: "screenshotFolderOverride"), !custom.isEmpty {
+            return URL(fileURLWithPath: (custom as NSString).expandingTildeInPath, isDirectory: true)
+        }
         if let raw = UserDefaults(suiteName: "com.apple.screencapture")?.string(forKey: "location"), !raw.isEmpty {
             let url = URL(fileURLWithPath: (raw as NSString).expandingTildeInPath, isDirectory: true)
             var isDir: ObjCBool = false
@@ -30,7 +33,7 @@ enum Preferences {
             return paths.map { URL(fileURLWithPath: $0, isDirectory: true) }
         }
         set {
-            defaults.set(newValue.map { $0.standardizedFileURL.path }, forKey: foldersKey)
+            defaults.set(newValue.map(\.path), forKey: foldersKey)
             NotificationCenter.default.post(name: .indexedFoldersChanged, object: nil)
         }
     }

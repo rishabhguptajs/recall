@@ -17,14 +17,14 @@ protocol Extractor {
 enum ExtractionError: Error { case unreadable }
 
 enum Extractors {
-    static let all: [Extractor] = [PlainTextExtractor(), PDFExtractor(), RichDocumentExtractor()]
+    static let all: [Extractor] = [PlainTextExtractor(), PDFExtractor(), RichDocumentExtractor(), ImageExtractor()]
 
     static func extractor(for url: URL) -> Extractor? {
         let ext = url.pathExtension.lowercased()
         return all.first { $0.extensions.contains(ext) }
     }
 
-    static var supportedExtensions: Set<String> { all.reduce(into: []) { $0.formUnion($1.extensions) } }
+    static let supportedExtensions: Set<String> = all.reduce(into: []) { $0.formUnion($1.extensions) }
 
     /// Max characters of text kept per item.
     static let maxTextLength = 1_000_000
@@ -70,11 +70,18 @@ struct PDFExtractor: Extractor {
 }
 
 /// docx / rtf / doc / odt via NSAttributedString document reading. Failures are skipped.
+/// The document type is always set explicitly so files never go through the HTML/WebKit importer
+/// (which could load remote resources). `.pages` can't be read this way, so it is indexed by name only.
 struct RichDocumentExtractor: Extractor {
-    let extensions: Set<String> = ["docx", "doc", "rtf", "rtfd", "odt", "pages", "webarchive"]
+    let extensions: Set<String> = ["docx", "doc", "rtf", "rtfd", "odt", "pages"]
+
+    private static let types: [String: NSAttributedString.DocumentType] = [
+        "docx": .officeOpenXML, "doc": .docFormat, "rtf": .rtf, "rtfd": .rtfd, "odt": .openDocument,
+    ]
 
     func extract(_ url: URL) throws -> Extracted {
-        let attr = try NSAttributedString(url: url, options: [:], documentAttributes: nil)
+        guard let type = Self.types[url.pathExtension.lowercased()] else { throw ExtractionError.unreadable }
+        let attr = try NSAttributedString(url: url, options: [.documentType: type], documentAttributes: nil)
         return Extracted(text: attr.string, kind: "document")
     }
 }

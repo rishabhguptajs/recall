@@ -54,6 +54,11 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
 
     func hide() { panel.orderOut(nil) }
 
+    /// Refreshes visible results after the index changed.
+    func indexDidChange() {
+        if panel.isVisible && !model.query.isEmpty { model.refresh() }
+    }
+
     func windowDidResignKey(_ notification: Notification) { hide() }
 
     // MARK: - Keyboard

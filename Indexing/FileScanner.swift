@@ -49,8 +49,8 @@ enum FileScanner {
         guard let v = try? url.resourceValues(forKeys: Set(keys)) else { return nil }
         let supported = Extractors.supportedExtensions.contains(url.pathExtension.lowercased())
         guard supported, v.isHidden != true else { return nil }
-        // Packages like .pages/.rtfd are directories; plain directories are not candidates.
-        if v.isDirectory == true && v.isPackage != true { return nil }
+        // Only regular files, or document packages like .rtfd/.pages (never pipes, sockets or devices).
+        guard v.isRegularFile == true || v.isPackage == true else { return nil }
         let size = Int64(v.fileSize ?? 0)
         guard size <= maxFileSize else { return nil }
         return Candidate(url: url, modifiedAt: v.contentModificationDate ?? Date(),
