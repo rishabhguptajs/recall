@@ -2,13 +2,30 @@
 import AppKit
 
 /// Debug-only test hook so the app can be driven from the terminal
-/// (`swift scripts/recall-debug.swift <command> [arg]`). Not compiled into Release builds.
-/// Commands: toggle | show | hide | esc | query <text> | key <down|up|enter|cmdenter|cmdc|space> | snapshot <png path> | state <json path>
+/// (`swift scripts/recall-debug.swift <command> [arg]`). Not compiled into Release builds, and only active
+/// when launched with `open --env RECALL_DEBUG_BRIDGE=1`. Output files go to
+/// ~/Library/Application Support/Recall/debug/ (the argument is a plain file name, never a path).
+/// Commands: toggle | show | hide | esc | query <text> | key <name> | snapshot <name.png> | state <name.json>
 final class DebugBridge {
     static let notification = Notification.Name("dev.recall.debug")
     private let panel: SearchPanelController
 
-    init(panel: SearchPanelController) {
+    static var isEnabled: Bool { ProcessInfo.processInfo.environment["RECALL_DEBUG_BRIDGE"] == "1" }
+
+    static var outputDirectory: URL {
+        let dir = AppDatabase.supportDirectory.appendingPathComponent("debug", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Accepts only a bare file name (no slashes, no "..").
+    static func outputURL(_ name: String) -> URL? {
+        guard !name.isEmpty, !name.contains("/"), !name.contains(".."), !name.hasPrefix(".") else { return nil }
+        return outputDirectory.appendingPathComponent(name)
+    }
+
+    init?(panel: SearchPanelController) {
+        guard Self.isEnabled else { return nil }
         self.panel = panel
         DistributedNotificationCenter.default().addObserver(
             forName: Self.notification, object: nil, queue: .main
@@ -29,8 +46,8 @@ final class DebugBridge {
         case "esc": panel.debugEscape()
         case "query": panel.model.query = arg
         case "key": panel.debugKey(arg)
-        case "snapshot": panel.debugSnapshot(to: URL(fileURLWithPath: arg))
-        case "state": panel.debugState(to: URL(fileURLWithPath: arg))
+        case "snapshot": if let url = Self.outputURL(arg) { panel.debugSnapshot(to: url) }
+        case "state": if let url = Self.outputURL(arg) { panel.debugState(to: url) }
         default: NSLog("DebugBridge: unknown command \(raw)")
         }
     }

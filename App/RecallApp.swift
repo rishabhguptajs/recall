@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import KeyboardShortcuts
 
 extension KeyboardShortcuts.Name {
@@ -16,9 +17,15 @@ enum RecallMain {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let panel = SearchPanelController()
+    private let statusMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let pauseMenuItem = NSMenuItem(title: "Pause Indexing", action: #selector(togglePause), keyEquivalent: "")
+    #if DEBUG
+    private var debugBridge: DebugBridge?
+    #endif
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -31,19 +38,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         debugBridge = DebugBridge(panel: panel)
         #endif
-    }
 
-    #if DEBUG
-    private var debugBridge: DebugBridge?
-    #endif
+        IndexStatus.shared.itemCount = AppDatabase.shared.itemCount()
+        Task.detached(priority: .utility) { await Indexer.shared.fullScan() }
+    }
 
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
+        menu.delegate = self
         menu.addItem(withTitle: "Search…", action: #selector(openSearch), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        statusMenuItem.isEnabled = false
+        menu.addItem(statusMenuItem)
+        pauseMenuItem.target = self
+        menu.addItem(pauseMenuItem)
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Recall", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
     }
 
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let status = IndexStatus.shared
+        statusMenuItem.title = status.summary
+        pauseMenuItem.title = status.isPaused ? "Resume Indexing" : "Pause Indexing"
+    }
+
     @objc private func openSearch() { panel.show() }
+
+    @objc private func togglePause() {
+        let paused = !IndexStatus.shared.isPaused
+        Task { await Indexer.shared.setPaused(paused) }
+    }
 }
