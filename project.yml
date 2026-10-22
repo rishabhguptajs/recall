@@ -10,6 +10,9 @@ packages:
   KeyboardShortcuts:
     url: https://github.com/sindresorhus/KeyboardShortcuts
     exactVersion: 2.4.0
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.9.6
 targets:
   Recall:
     type: application
@@ -18,6 +21,7 @@ targets:
     dependencies:
       - package: GRDB
       - package: KeyboardShortcuts
+      - package: Sparkle
     info:
       path: App/Info.plist
       properties:
@@ -30,6 +34,11 @@ targets:
         NSDocumentsFolderUsageDescription: Recall indexes your Documents so you can search them. Nothing leaves your Mac.
         NSDownloadsFolderUsageDescription: Recall indexes your Downloads so you can search them. Nothing leaves your Mac.
         RecallLicenseServer: $(RECALL_LICENSE_SERVER)
+        # Updates (Sparkle). Automatic checks are off until the user turns them on.
+        SUFeedURL: https://raegent.com/recall/appcast.xml
+        SUPublicEDKey: 6XNRQTh0MjQgbSYjw0omE8xoXcJWGKXqK2MhHtH/4dc=
+        SUEnableAutomaticChecks: false
+        SUEnableSystemProfiling: false
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     settings:
@@ -39,6 +48,7 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_VERSION: "5.0"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
       configs:

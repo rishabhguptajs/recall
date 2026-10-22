@@ -73,6 +73,7 @@ struct SettingsView: View {
 
 struct GeneralSettings: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @ObservedObject private var updates = Updates.shared
     @State private var loginError: String?
 
     var body: some View {
@@ -82,6 +83,17 @@ struct GeneralSettings: View {
                 .onChange(of: launchAtLogin) { setLaunchAtLogin(launchAtLogin) }
             if let loginError {
                 Text(loginError).font(.caption).foregroundStyle(.orange)
+            }
+            Section {
+                Toggle("Check for updates automatically", isOn: $updates.automaticChecks)
+                HStack {
+                    Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Check Now") { updates.checkNow() }
+                }
+                Text("Update checks download a short list of versions from raegent.com. The request carries only Recall’s version number, nothing about your files, searches or clipboard. Recall installs only updates signed by its developer.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 Text("In the search panel: type to search, ↑↓ to move, ↩ to open, ⌘↩ to show in Finder, ⌘C to copy, ⌘Y (or Space after using the arrows) for Quick Look. Type /f, /s or /c to search only files, screenshots or clipboard.")

@@ -157,6 +157,13 @@ final class DebugBridge {
                 try? result.write(to: url, atomically: true, encoding: .utf8)
             }
         case "recheck": LicenseManager.shared.refreshIfDue(force: true)
+        case "update": Updates.shared.checkNow() // interactive check (Sparkle window)
+        case "update-silent": Updates.shared.debugSilentUpdate() // download now, install on quit
+        case "version": // version <file.txt>
+            if let url = Self.outputURL(arg) {
+                let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+                try? v.write(to: url, atomically: true, encoding: .utf8)
+            }
         case "search": // search <file.json> <query>: titles + sources of what the panel would show
             let p = arg.split(separator: " ", maxSplits: 1).map(String.init)
             guard p.count == 2, let url = Self.outputURL(p[0]) else { break }

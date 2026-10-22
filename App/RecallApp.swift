@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         #endif
 
         IndexStatus.shared.itemCount = AppDatabase.shared.itemCount()
+        _ = Updates.shared // starts Sparkle (checks only if the user turned automatic checks on)
         LicenseManager.shared.start() // before scanning: Pro decides which folders are indexed
         startWatching()
         let nc = NotificationCenter.default
@@ -142,6 +143,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func checkForUpdates() {
+        Updates.shared.checkNow()
+    }
+
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         menu.delegate = self
@@ -153,6 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(pauseMenuItem)
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
+        menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Quit Recall", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
     }

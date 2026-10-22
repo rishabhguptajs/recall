@@ -5,7 +5,9 @@ A private "search my whole Mac" app for macOS. Press **⌥Space**, type somethin
 finds it across your files, screenshots and clipboard history.
 
 Everything stays on your Mac: no cloud, no account, no telemetry. Your files, searches and clipboard
-never leave it. The only network request is the Pro license check (see [Free and Pro](#free-and-pro)).
+never leave it. Recall makes only two kinds of network request:
+- the Pro license check (see [Free and Pro](#free-and-pro));
+- update checks, which are off until you turn them on or choose **Check for Updates…** (see [Updates](#updates)).
 
 ## Free and Pro
 
@@ -54,13 +56,14 @@ Code and data files (JS, CSS, JSON, CSV…) are searchable by name and their fir
   (clipboard items go back on the clipboard; files copy like in Finder).
 - **⌘Y** previews with Quick Look. **Space** previews too, once you've moved through the results with the arrow keys.
 - Filter with the tabs, or type **/f** (files), **/s** (screenshots) or **/c** (clipboard).
-- The menu-bar icon shows indexing progress and has Pause Indexing, Settings and Quit.
+- The menu-bar icon shows indexing progress and has Pause Indexing, Settings, Check for Updates and Quit.
 
-**Settings** has four tabs:
-- **General:** hotkey, launch at login.
+**Settings** has five tabs:
+- **General:** hotkey, launch at login, automatic update checks.
 - **Folders:** add, remove or reset the indexed folders.
 - **Clipboard:** turn history on or off, set how long to keep it, clear it.
 - **Data:** stats, pause indexing, and Clear All Data.
+- **License:** activate or deactivate Pro.
 
 ## How search works
 
@@ -108,11 +111,17 @@ open ~/Applications/Recall.app
 - `build.sh` signs every build with it, so macOS ties folder permissions to the certificate instead of to one build.
   Without it, every update would ask for folder access again.
 - If you lose the file, your users have to re-approve folder access once after the next update.
+- `keys/sparkle-private-key.txt` signs updates. If it's lost, already-installed copies can't verify new updates, and
+  users must download the next version by hand. It's backed up together with the other keys.
 - The first time `codesign` uses the key, macOS may ask for permission. Click **Always Allow**.
 
 `build.sh` runs `xcodegen generate` (`project.yml` → `Recall.xcodeproj`), then `xcodebuild`. It copies the app to
 `~/Applications/Recall.app` (set `INSTALL=0` to skip that). Package versions are pinned in `project.yml`:
 GRDB 7.11.1 and KeyboardShortcuts 2.4.0.
+
+**App icon.** `./scripts/make-icon.sh` draws it in code (`scripts/make-icon.swift`). It writes the layers of
+`App/AppIcon.icon` (Icon Composer format, which Xcode turns into the macOS 26 icon and the icon for macOS 14/15)
+and a complete 1024 px `assets/icon.png` for the website.
 
 ## Releasing (without an Apple Developer account)
 
@@ -130,6 +139,27 @@ The app isn't notarized, so macOS blocks it the first time. Put these steps on t
 3. Enter your password, then click **Open**.
 
 macOS only asks once. Updates signed with the same certificate open normally, and folder permissions carry over.
+
+## Updates
+
+Recall uses [Sparkle](https://sparkle-project.org) 2.
+- **Check for Updates…** in the menu-bar menu checks right away.
+- **Settings → General → Check for updates automatically** is off by default. When on, Recall checks about once a day.
+- A check downloads `https://raegent.com/recall/appcast.xml`. The request carries only Recall's version number
+  (no system profile).
+- Every update is signed with Recall's EdDSA key (`SUPublicEDKey` in `project.yml`). Sparkle installs only updates with
+  a valid signature that are also signed with the same "Recall Developer" certificate, so folder permissions carry over.
+
+**Publishing an update:**
+1. Raise `CFBundleShortVersionString` and `CFBundleVersion` in `project.yml`. Sparkle compares `CFBundleVersion`.
+2. Run `./scripts/make-dmg.sh`. It builds the DMG, copies it to `releases/` (git-ignored), and regenerates
+   `releases/appcast.xml`, signing each DMG with `keys/sparkle-private-key.txt`.
+3. Upload the new DMG to the download folder (`RECALL_DOWNLOAD_BASE`), then replace `appcast.xml` on the website.
+   Keep the older DMGs in `releases/` so the feed keeps their entries.
+
+**Testing an update locally (Debug builds):** serve a folder holding a DMG and an `appcast.xml` made with
+`generate_appcast --download-url-prefix http://127.0.0.1:8000/`, then launch with
+`open --env RECALL_FEED_URL=http://127.0.0.1:8000/appcast.xml ~/Applications/Recall.app`.
 
 ## Permissions
 
@@ -190,7 +220,8 @@ Storage/    GRDB database and schema
 Embedding/  Embedder protocol, MiniLM, word-vector and contextual embedders, background worker
 Licensing/  Pro: signed-token check, device ID, activation/re-check/deactivation
 server/     license server (Cloudflare Worker + D1)
-scripts/    build, DMG, signing certificate and dev helpers
+scripts/    build, DMG + update feed, signing certificate, icon and dev helpers
+assets/     icon.png for the website
 ```
 
 **Debug test hook.** Debug builds can be driven from the terminal, for automated checks without

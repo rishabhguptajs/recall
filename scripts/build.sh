@@ -13,7 +13,17 @@ cp -R "build/DerivedData/Build/Products/$CONFIG/Recall.app" build/Recall.app
 # Sign with the stable self-signed certificate (scripts/make-signing-cert.sh) so macOS keeps
 # folder permissions across builds. Falls back to the ad-hoc signature if it isn't installed.
 if security find-certificate -c "$SIGN_ID" >/dev/null 2>&1; then
-  codesign --force --sign "$SIGN_ID" --timestamp=none build/Recall.app
+  sign() { codesign --force --sign "$SIGN_ID" --timestamp=none "$@"; }
+  # Sparkle's helpers first (inside out), then the framework, then the app.
+  SPK=build/Recall.app/Contents/Frameworks/Sparkle.framework/Versions/B
+  if [[ -d $SPK ]]; then
+    for xpc in $SPK/XPCServices/*.xpc(N); do sign --preserve-metadata=entitlements "$xpc"; done
+    sign $SPK/Autoupdate
+    sign $SPK/Updater.app
+    sign build/Recall.app/Contents/Frameworks/Sparkle.framework
+  fi
+  sign build/Recall.app
+  codesign --verify --deep --strict build/Recall.app
   echo "Signed with \"$SIGN_ID\""
 else
   echo "warning: \"$SIGN_ID\" certificate not found, app is signed ad hoc (run scripts/make-signing-cert.sh)"

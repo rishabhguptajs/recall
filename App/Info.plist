@@ -37,5 +37,13 @@
 	<string>Recall indexes your Downloads so you can search them. Nothing leaves your Mac.</string>
 	<key>RecallLicenseServer</key>
 	<string>$(RECALL_LICENSE_SERVER)</string>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>https://raegent.com/recall/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>6XNRQTh0MjQgbSYjw0omE8xoXcJWGKXqK2MhHtH/4dc=</string>
 </dict>
 </plist>
