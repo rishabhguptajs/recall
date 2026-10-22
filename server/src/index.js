@@ -80,7 +80,8 @@ async function serveRelease(request, env, url, ctx) {
   if (!object) return json({ error: "not_found" }, 404);
   if (request.method === "GET" && ctx) {
     if (key === "appcast.xml") {
-      const v = /Recall\/([\d.]+)/.exec(request.headers.get("User-Agent") ?? "")?.[1] ?? "unknown";
+      // Strict and bounded: the header is client-controlled, so junk must not create new rows.
+      const v = /^Recall\/(\d{1,3}(?:\.\d{1,3}){1,3})(?:\s|$)/.exec(request.headers.get("User-Agent") ?? "")?.[1] ?? "other";
       ctx.waitUntil(count(env, `update_check:${v}`));
     } else if (!range || (range.offset ?? -1) === 0) {
       ctx.waitUntil(count(env, `download:${key.slice(7, -4)}`)); // first chunk only, so resumes don't double count
