@@ -294,7 +294,7 @@ struct LicenseSettings: View {
                 Section {
                     Text("Pro adds screenshot text search, your full clipboard history, longer retention and extra folders.")
                         .font(.callout)
-                    TextField("License key", text: $keyInput, prompt: Text("RCL-XXXXX-XXXXX-XXXXX-XXXXX"))
+                    TextField("License key", text: $keyInput, prompt: Text("Paste the key from your purchase email"))
                         .font(.system(.body, design: .monospaced))
                         .onSubmit(activate)
                     HStack {
@@ -309,7 +309,7 @@ struct LicenseSettings: View {
                 Text(message).font(.callout).foregroundStyle(.orange)
             }
             Section("Privacy") {
-                Text("Recall contacts its license server only when you activate or deactivate, and about once a month while Pro is active to re-check the key. It sends the license key and an anonymous ID for this Mac (a one-way hash), nothing else: no files, searches, clipboard or usage data. Recall Free never contacts the server. If you're offline, Pro keeps working.")
+                Text("Recall contacts its license server only when you activate or deactivate, and about once a month while Pro is active to re-check the key with Dodo Payments, where it was bought. It sends the license key and an anonymous ID for this Mac (a one-way hash), nothing else: no files, searches, clipboard or usage data. Recall Free never contacts the server. If you're offline, Pro keeps working.")
                     .font(.callout).foregroundStyle(.secondary)
             }
         }
@@ -331,9 +331,9 @@ struct LicenseSettings: View {
         }
     }
 
-    /// RCL-ABCDE-…-WXYZ0: enough to recognise the key without showing all of it.
+    /// First and last few characters: enough to recognise the key without showing all of it.
     static func masked(_ key: String) -> String {
-        guard key.count > 10 else { return key }
-        return String(key.prefix(9)) + "…" + String(key.suffix(5))
+        guard key.count > 12 else { return key }
+        return String(key.prefix(6)) + "…" + String(key.suffix(4))
     }
 }

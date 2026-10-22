@@ -2,6 +2,10 @@ name = "recall-license"
 main = "src/index.js"
 compatibility_date = "2026-01-01"
 
+[vars]
+# Dodo Payments license API. Use https://test.dodopayments.com while testing with test-mode keys.
+DODO_API_BASE = "https://live.dodopayments.com"
+
 # Create the database with `wrangler d1 create recall-license` and paste its id here.
 [[d1_databases]]
 binding = "DB"
@@ -9,7 +13,6 @@ database_name = "recall-license"
 database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 migrations_dir = "migrations"
 
-# Secrets (never in this file):
+# Secret (never in this file):
 #   wrangler secret put SIGNING_KEY   # base64 PKCS#8 Ed25519 private key, see server/README.md
-#   wrangler secret put ADMIN_TOKEN   # long random string for the admin endpoints
-# For local `wrangler dev`, put the same two values in server/.dev.vars (git-ignored).
+# For local `wrangler dev`, put SIGNING_KEY (and optionally DODO_API_BASE) in server/.dev.vars (git-ignored).

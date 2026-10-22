@@ -1,20 +1,11 @@
--- Licenses: only a hash of each key is stored, never the key itself.
-CREATE TABLE licenses (
-  id TEXT PRIMARY KEY,
-  key_hash TEXT NOT NULL UNIQUE,
-  email TEXT NOT NULL,
-  max_devices INTEGER NOT NULL DEFAULT 3,
-  status TEXT NOT NULL DEFAULT 'active', -- 'active' | 'revoked'
-  created_at INTEGER NOT NULL,
-  note TEXT
-);
-CREATE INDEX licenses_email ON licenses(email);
-
--- One row per Mac using a license. `device` is an anonymous hash, not a hardware serial.
+-- Which Dodo Payments activation instance belongs to which Mac.
+-- Only a SHA-256 hash of the license key is stored, and `device` is an anonymous hash.
 CREATE TABLE activations (
-  license_id TEXT NOT NULL REFERENCES licenses(id) ON DELETE CASCADE,
+  key_hash TEXT NOT NULL,
   device TEXT NOT NULL,
+  instance_id TEXT NOT NULL,      -- Dodo's lki_… id, needed to deactivate
+  license_key_id TEXT NOT NULL,   -- Dodo's lic_… id, put in the signed token
   activated_at INTEGER NOT NULL,
   last_seen INTEGER NOT NULL,
-  PRIMARY KEY (license_id, device)
+  PRIMARY KEY (key_hash, device)
 );

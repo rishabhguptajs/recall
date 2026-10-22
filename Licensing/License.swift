@@ -21,6 +21,7 @@ extension Notification.Name {
 /// Network use: only when the user activates or deactivates, and when a Pro token is due for its
 /// ~30-day re-check (at most one request every few hours until it succeeds). Free users never
 /// contact the server. Requests carry the license key and the anonymous device ID, nothing else.
+/// The server checks the key with Dodo Payments (where it was bought) and returns a signed token.
 /// Offline, or if the server is down, Pro keeps working; only an explicit "revoked" or
 /// "not activated" answer turns it off.
 @MainActor
@@ -59,13 +60,13 @@ final class LicenseManager: ObservableObject {
     // MARK: - Actions
 
     enum ActivationError: LocalizedError {
-        case invalidKey, revoked, deviceLimit(Int), notActivated, server(String), offline, notConfigured
+        case invalidKey, revoked, deviceLimit, notActivated, server(String), offline, notConfigured
 
         var errorDescription: String? {
             switch self {
             case .invalidKey: "That license key wasn't recognised. Check it for typos."
             case .revoked: "This license key has been turned off (refunded or revoked)."
-            case .deviceLimit(let n): "This key is already in use on \(n) Macs. Deactivate it on one of them first (Settings → License), or contact support."
+            case .deviceLimit: "This key is already active on the maximum number of Macs. Deactivate it on one of them first (Settings → License), or contact support."
             case .notActivated: "This Mac isn't activated for that key."
             case .server(let s): "The license server had a problem (\(s)). Try again later."
             case .offline: "Couldn't reach the license server. Check your internet connection and try again."
@@ -75,7 +76,8 @@ final class LicenseManager: ObservableObject {
     }
 
     func activate(key rawKey: String) async throws {
-        let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        // Keys are case-sensitive (Dodo Payments issues them), so only trim whitespace.
+        let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { throw ActivationError.invalidKey }
         busy = true
         defer { busy = false }
@@ -138,7 +140,7 @@ final class LicenseManager: ObservableObject {
         case "invalid_key", "bad_key": throw ActivationError.invalidKey
         case "revoked": throw ActivationError.revoked
         case "not_activated": throw ActivationError.notActivated
-        case "device_limit": throw ActivationError.deviceLimit(json["max_devices"] as? Int ?? 3)
+        case "device_limit": throw ActivationError.deviceLimit
         default: throw ActivationError.server("HTTP \(status)")
         }
     }

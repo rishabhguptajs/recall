@@ -20,15 +20,17 @@ never leave it. The only network request is the Pro license check (see [Free and
 **Nothing is deleted when Pro is off.** Screenshots stay indexed and older clipboard items stay stored; they are only
 hidden. Activating Pro brings them back instantly.
 
-**How activation works** (Settings → License):
-1. Entering a key contacts the license server once. It sends the key and an anonymous device ID (a salted
-   SHA-256 of the Mac's hardware UUID). Each key works on 3 Macs.
-2. The server returns a token signed with Ed25519. The app checks the signature offline with the public key it
-   ships with, and the token is tied to this Mac.
-3. About every 30 days the app quietly re-checks.
-   - Offline or server down: nothing changes.
-   - Server says the key was revoked or this Mac was deactivated: back to Free.
-4. "Deactivate This Mac" frees the slot.
+**Buying and activating.** Payments and license keys go through **Dodo Payments**: the buyer gets a key by email.
+In Settings → License:
+1. **Activate:** entering the key contacts Recall's license server once. It sends the key and an anonymous device ID
+   (a salted SHA-256 of the Mac's hardware UUID). The server checks the key with Dodo Payments; each key works on
+   3 Macs (set in Dodo).
+2. **Token:** the server returns a token signed with Ed25519. The app checks the signature offline with the public
+   key it ships with. The token is tied to this Mac, so copying the license file to another Mac doesn't work.
+3. **Monthly re-check:** about every 30 days the app re-checks quietly.
+   - Offline, or the server or Dodo down: nothing changes.
+   - Key refunded or disabled, or this Mac removed in Dodo: back to Free.
+4. **Deactivate This Mac** frees the slot.
 
 Free users never contact the server. The server code is in [`server/`](server/README.md).
 

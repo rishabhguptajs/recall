@@ -1,24 +1,25 @@
-// Recall license server: a Cloudflare Worker with a D1 database.
+// Recall license server: a Cloudflare Worker in front of Dodo Payments' license API.
+//
+// Dodo Payments creates license keys, emails them to buyers, enforces the activation limit
+// (set on the product in the Dodo dashboard) and disables keys on refunds. This Worker adds what
+// Dodo doesn't: a token signed with Ed25519 and tied to one Mac, which the app checks offline, so a
+// copied license file doesn't work on another Mac.
 //
 // The app talks to it only when someone activates or deactivates Pro, and about once a month
 // afterwards to re-check. It sends the license key and an anonymous device ID (a hash), nothing else.
 //
-// App endpoints:
-//   POST /v1/activate    {key, device} -> {token}   (uses one of the license's device slots)
-//   POST /v1/validate    {key, device} -> {token}   (monthly re-check; fresh token)
-//   POST /v1/deactivate  {key, device} -> {ok}      (frees the slot)
-// Admin endpoints (Authorization: Bearer $ADMIN_TOKEN):
-//   POST /v1/admin/licenses       {email, max_devices?, note?} -> {id, key}
-//   GET  /v1/admin/licenses?email=…                           -> licenses with their devices
-//   POST /v1/admin/revoke         {key} or {id}               (refunds, chargebacks)
-//   POST /v1/admin/reset-devices  {key} or {id}               (frees every slot)
+//   POST /v1/activate    {key, device} -> {token}
+//   POST /v1/validate    {key, device} -> {token}
+//   POST /v1/deactivate  {key, device} -> {ok}
+//
+// Errors the app acts on: invalid_key (404), revoked (403), not_activated (403), device_limit (409).
+// Any Dodo outage becomes upstream_error (502), which the app ignores (Pro keeps working).
 //
 // Tokens are "<base64url(JSON payload)>.<base64url(Ed25519 signature of the first part)>".
-// The app checks the signature with the public key it ships with, so tokens can't be forged.
 
 const RECHECK_SECONDS = 30 * 24 * 3600;
-const DEFAULT_MAX_DEVICES = 3;
 const DEVICE_RE = /^[0-9a-f]{64}$/;
+const DODO_TIMEOUT_MS = 10_000;
 
 export default {
   async fetch(request, env) {
@@ -29,175 +30,155 @@ export default {
           case "/v1/activate": return await activate(request, env);
           case "/v1/validate": return await validate(request, env);
           case "/v1/deactivate": return await deactivate(request, env);
-          case "/v1/admin/licenses": return await admin(request, env, createLicense);
-          case "/v1/admin/revoke": return await admin(request, env, revoke);
-          case "/v1/admin/reset-devices": return await admin(request, env, resetDevices);
         }
-      } else if (request.method === "GET" && url.pathname === "/v1/admin/licenses") {
-        return await admin(request, env, (_, env) => listLicenses(url, env));
       } else if (request.method === "GET" && url.pathname === "/") {
         return json({ ok: true, service: "recall-license" });
       }
       return json({ error: "not_found" }, 404);
     } catch (err) {
+      if (err instanceof UpstreamError) return json({ error: "upstream_error" }, 502);
       console.error(err);
       return json({ error: "server_error" }, 500);
     }
   },
 };
 
-// MARK: - App endpoints
+// MARK: - Endpoints
 
 async function activate(request, env) {
   const input = await readClientInput(request);
   if (input.error) return json(input, 400);
-  const license = await findLicense(env, input.key);
-  if (!license) return json({ error: "invalid_key" }, 404);
-  if (license.status !== "active") return json({ error: "revoked" }, 403);
-
+  const keyHash = await sha256Hex(input.key);
   const now = nowSeconds();
-  const existing = await env.DB.prepare(
-    "SELECT 1 FROM activations WHERE license_id = ? AND device = ?"
-  ).bind(license.id, input.device).first();
+
+  // Same Mac activating again (reinstall, re-entered key): reuse its Dodo instance instead of
+  // creating a new one, which would use up another slot.
+  const existing = await findActivation(env, keyHash, input.device);
   if (existing) {
-    await touch(env, license.id, input.device, now);
-  } else {
-    // Insert only while the license still has a free slot (one statement, so two Macs
-    // activating at the same moment can't both squeeze past the limit).
-    const result = await env.DB.prepare(
-      `INSERT INTO activations (license_id, device, activated_at, last_seen)
-       SELECT ?1, ?2, ?3, ?3
-       WHERE (SELECT COUNT(*) FROM activations WHERE license_id = ?1) < ?4`
-    ).bind(license.id, input.device, now, license.max_devices).run();
-    if (!result.meta.changes) {
-      return json({ error: "device_limit", max_devices: license.max_devices }, 409);
+    const valid = await dodoValidate(env, input.key, existing.instance_id);
+    if (valid) {
+      await touch(env, keyHash, input.device, now);
+      return json({ token: await signToken(env, existing.license_key_id, input.device, now) });
     }
+    // Instance removed in Dodo (or key disabled): forget it and try a fresh activation below,
+    // which reports "revoked" if the key itself is off.
+    await deleteActivation(env, keyHash, input.device);
   }
-  return json({ token: await signToken(env, license, input.device, now) });
+
+  const res = await dodo(env, "/licenses/activate", {
+    license_key: input.key,
+    name: `recall-${input.device.slice(0, 16)}`, // anonymous: never the Mac's name
+  });
+  if (res.status === 404) return json({ error: "invalid_key" }, 404);
+  if (res.status === 403) return json({ error: "revoked" }, 403);
+  if (res.status === 422) return json({ error: "device_limit" }, 409);
+  if (res.status !== 200 && res.status !== 201) throw new UpstreamError(res.status);
+  // Only the IDs are kept; the customer details Dodo returns are not stored or logged.
+  const instanceId = res.body.id;
+  const licenseKeyId = res.body.license_key_id || "dodo";
+  if (typeof instanceId !== "string") throw new UpstreamError("no instance id");
+
+  await env.DB.prepare(
+    `INSERT OR REPLACE INTO activations (key_hash, device, instance_id, license_key_id, activated_at, last_seen)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(keyHash, input.device, instanceId, licenseKeyId, now, now).run();
+  return json({ token: await signToken(env, licenseKeyId, input.device, now) });
 }
 
 async function validate(request, env) {
   const input = await readClientInput(request);
   if (input.error) return json(input, 400);
-  const license = await findLicense(env, input.key);
-  if (!license) return json({ error: "invalid_key" }, 404);
-  if (license.status !== "active") return json({ error: "revoked" }, 403);
+  const keyHash = await sha256Hex(input.key);
+  const activation = await findActivation(env, keyHash, input.device);
+  if (!activation) return json({ error: "not_activated" }, 403);
+  const valid = await dodoValidate(env, input.key, activation.instance_id);
+  // Refunded, disabled or expired key, or this Mac was removed in the Dodo dashboard.
+  if (!valid) return json({ error: "revoked" }, 403);
   const now = nowSeconds();
-  const updated = await touch(env, license.id, input.device, now);
-  if (!updated) return json({ error: "not_activated" }, 403);
-  return json({ token: await signToken(env, license, input.device, now) });
+  await touch(env, keyHash, input.device, now);
+  return json({ token: await signToken(env, activation.license_key_id, input.device, now) });
 }
 
 async function deactivate(request, env) {
   const input = await readClientInput(request);
   if (input.error) return json(input, 400);
-  const license = await findLicense(env, input.key);
-  if (!license) return json({ error: "invalid_key" }, 404);
-  await env.DB.prepare("DELETE FROM activations WHERE license_id = ? AND device = ?")
-    .bind(license.id, input.device).run();
+  const keyHash = await sha256Hex(input.key);
+  const activation = await findActivation(env, keyHash, input.device);
+  if (activation) {
+    const res = await dodo(env, "/licenses/deactivate", {
+      license_key: input.key,
+      license_key_instance_id: activation.instance_id,
+    });
+    // 404: already gone in Dodo. Anything else unexpected: report it, keep the record.
+    if (res.status >= 300 && res.status !== 404) throw new UpstreamError(res.status);
+    await deleteActivation(env, keyHash, input.device);
+  }
   return json({ ok: true });
 }
 
-// MARK: - Admin endpoints
+// MARK: - Dodo Payments
 
-async function admin(request, env, handler) {
-  const expected = env.ADMIN_TOKEN;
-  if (!expected) return json({ error: "admin_disabled" }, 503);
-  const given = (request.headers.get("Authorization") || "").replace(/^Bearer /, "");
-  if (!timingSafeEqual(given, expected)) return json({ error: "unauthorized" }, 401);
-  return handler(request, env);
-}
+class UpstreamError extends Error {}
 
-async function createLicense(request, env) {
-  const body = await readJSON(request);
-  const email = typeof body.email === "string" ? body.email.trim().slice(0, 254) : "";
-  if (!email) return json({ error: "email_required" }, 400);
-  const max = Number.isInteger(body.max_devices) && body.max_devices > 0 ? body.max_devices : DEFAULT_MAX_DEVICES;
-  const key = newKey();
-  const id = crypto.randomUUID();
-  await env.DB.prepare(
-    `INSERT INTO licenses (id, key_hash, email, max_devices, status, created_at, note)
-     VALUES (?, ?, ?, ?, 'active', ?, ?)`
-  ).bind(id, await sha256Hex(normalizeKey(key)), email, max, nowSeconds(),
-         typeof body.note === "string" ? body.note.slice(0, 500) : null).run();
-  return json({ id, key, email, max_devices: max });
-}
-
-async function listLicenses(url, env) {
-  const email = url.searchParams.get("email");
-  const licenses = email
-    ? await env.DB.prepare("SELECT * FROM licenses WHERE email = ? ORDER BY created_at DESC").bind(email).all()
-    : await env.DB.prepare("SELECT * FROM licenses ORDER BY created_at DESC LIMIT 100").all();
-  const out = [];
-  for (const l of licenses.results) {
-    const devices = await env.DB.prepare(
-      "SELECT device, activated_at, last_seen FROM activations WHERE license_id = ?"
-    ).bind(l.id).all();
-    const { key_hash, ...rest } = l;
-    out.push({ ...rest, devices: devices.results });
+/** Public license endpoints: no API key needed. DODO_API_BASE is test or live. */
+async function dodo(env, path, body) {
+  const base = (env.DODO_API_BASE || "https://live.dodopayments.com").replace(/\/$/, "");
+  let res;
+  try {
+    res = await fetch(base + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(DODO_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new UpstreamError(String(err));
   }
-  return json({ licenses: out });
+  let parsed = {};
+  try { parsed = await res.json(); } catch { /* empty or non-JSON body */ }
+  if (res.status >= 500) throw new UpstreamError(res.status);
+  return { status: res.status, body: parsed || {} };
 }
 
-async function revoke(request, env) {
-  const license = await licenseFromAdminBody(request, env);
-  if (!license) return json({ error: "not_found" }, 404);
-  await env.DB.prepare("UPDATE licenses SET status = 'revoked' WHERE id = ?").bind(license.id).run();
-  return json({ ok: true, id: license.id });
+/** true / false from Dodo; throws UpstreamError when Dodo can't answer. */
+async function dodoValidate(env, key, instanceId) {
+  const res = await dodo(env, "/licenses/validate", { license_key: key, license_key_instance_id: instanceId });
+  if (res.status !== 200 || typeof res.body.valid !== "boolean") throw new UpstreamError(res.status);
+  return res.body.valid;
 }
 
-async function resetDevices(request, env) {
-  const license = await licenseFromAdminBody(request, env);
-  if (!license) return json({ error: "not_found" }, 404);
-  await env.DB.prepare("DELETE FROM activations WHERE license_id = ?").bind(license.id).run();
-  return json({ ok: true, id: license.id });
+// MARK: - Storage
+
+function findActivation(env, keyHash, device) {
+  return env.DB.prepare("SELECT * FROM activations WHERE key_hash = ? AND device = ?").bind(keyHash, device).first();
 }
 
-async function licenseFromAdminBody(request, env) {
-  const body = await readJSON(request);
-  if (typeof body.id === "string") {
-    return env.DB.prepare("SELECT * FROM licenses WHERE id = ?").bind(body.id).first();
-  }
-  if (typeof body.key === "string") return findLicense(env, body.key);
-  return null;
+function deleteActivation(env, keyHash, device) {
+  return env.DB.prepare("DELETE FROM activations WHERE key_hash = ? AND device = ?").bind(keyHash, device).run();
+}
+
+function touch(env, keyHash, device, now) {
+  return env.DB.prepare("UPDATE activations SET last_seen = ? WHERE key_hash = ? AND device = ?")
+    .bind(now, keyHash, device).run();
 }
 
 // MARK: - Helpers
 
 async function readClientInput(request) {
-  const body = await readJSON(request);
-  const key = typeof body.key === "string" ? normalizeKey(body.key) : "";
+  let body = {};
+  try { body = (await request.json()) || {}; } catch { /* bad JSON */ }
+  // Dodo keys are case-sensitive, so only surrounding whitespace is removed.
+  const key = typeof body.key === "string" ? body.key.trim() : "";
   const device = typeof body.device === "string" ? body.device.toLowerCase() : "";
-  if (!key || key.length > 64) return { error: "bad_key" };
+  if (!key || key.length > 128) return { error: "bad_key" };
   if (!DEVICE_RE.test(device)) return { error: "bad_device" };
   return { key, device };
 }
 
-async function readJSON(request) {
-  try {
-    const body = await request.json();
-    return body && typeof body === "object" ? body : {};
-  } catch {
-    return {};
-  }
-}
-
-async function findLicense(env, key) {
-  return env.DB.prepare("SELECT * FROM licenses WHERE key_hash = ?")
-    .bind(await sha256Hex(normalizeKey(key))).first();
-}
-
-async function touch(env, licenseId, device, now) {
-  const r = await env.DB.prepare("UPDATE activations SET last_seen = ? WHERE license_id = ? AND device = ?")
-    .bind(now, licenseId, device).run();
-  return r.meta.changes > 0;
-}
-
-async function signToken(env, license, device, now) {
-  const payload = { v: 1, lid: license.id, dev: device, plan: "pro", iat: now, chk: now + RECHECK_SECONDS };
+async function signToken(env, licenseId, device, now) {
+  const payload = { v: 1, lid: licenseId, dev: device, plan: "pro", iat: now, chk: now + RECHECK_SECONDS };
   const body = base64url(new TextEncoder().encode(JSON.stringify(payload)));
-  const key = await signingKey(env);
-  const sig = await crypto.subtle.sign({ name: "Ed25519" }, key, new TextEncoder().encode(body));
+  const sig = await crypto.subtle.sign({ name: "Ed25519" }, await signingKey(env), new TextEncoder().encode(body));
   return `${body}.${base64url(new Uint8Array(sig))}`;
 }
 
@@ -211,18 +192,6 @@ async function signingKey(env) {
   return cachedKey;
 }
 
-// Keys look like RCL-XXXXX-XXXXX-XXXXX-XXXXX (Crockford base32, 100 random bits).
-function newKey() {
-  const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-  const bytes = crypto.getRandomValues(new Uint8Array(20));
-  const chars = Array.from(bytes, (b) => alphabet[b & 31]).join("");
-  return `RCL-${chars.match(/.{5}/g).join("-")}`;
-}
-
-function normalizeKey(key) {
-  return key.trim().toUpperCase().replace(/\s+/g, "");
-}
-
 async function sha256Hex(s) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -232,14 +201,6 @@ function base64url(bytes) {
   let s = "";
   for (const b of bytes) s += String.fromCharCode(b);
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function timingSafeEqual(a, b) {
-  const x = new TextEncoder().encode(a);
-  const y = new TextEncoder().encode(b);
-  let diff = x.length ^ y.length;
-  for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] || 0) ^ (y[i] || 0);
-  return diff === 0;
 }
 
 function nowSeconds() {

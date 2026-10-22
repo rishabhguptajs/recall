@@ -1,11 +1,31 @@
 # Recall license server
 
-A Cloudflare Worker with a D1 (SQLite) database. It issues license keys, limits each key to
-3 Macs, and signs the Pro tokens the app checks offline. Cloudflare's free plan is enough.
+A small Cloudflare Worker in front of **Dodo Payments' license key API**. The free Cloudflare plan is enough.
 
-The app only calls it when someone activates or deactivates Pro, and about every 30 days afterwards to re-check.
-It sends the license key and an anonymous device hash. Free users never call it. If the server can't be reached,
-Pro keeps working; only a "revoked" or "not activated" answer turns it off.
+**Dodo Payments handles:**
+- creating license keys
+- emailing them to buyers
+- the activation limit
+- turning keys off on refunds
+
+**This Worker adds** a token signed with Ed25519 and tied to one Mac. The app checks it offline, so copying the
+license file to another Mac doesn't share a slot. The Worker keeps one row per activated Mac (a key hash, an
+anonymous device hash and Dodo's instance ID). It doesn't keep the customer's name or email.
+
+**When the app calls it:** only on activate and deactivate, and about every 30 days afterwards to re-check. It sends
+the license key and the anonymous device hash. Free users never call it.
+
+**When Pro turns off:** if Dodo or the Worker is down, Pro keeps working. Only a refunded or disabled key, or a Mac
+removed in the Dodo dashboard, turns Pro off.
+
+## Set up the product in Dodo Payments
+
+1. Create the product (one-time payment), then turn on **License keys** for it.
+2. **Activations limit:** 3. **License length:** No expiration.
+3. Optional: add an activation message, for example "Open Recall → Settings → License and paste this key."
+   Dodo includes it in the email with the key.
+4. **To test first:** do all of this in **Test mode**, make a test purchase, and use that key.
+   Set `DODO_API_BASE = "https://test.dodopayments.com"` in `wrangler.toml` while you do.
 
 ## Deploy (one time)
 
@@ -16,71 +36,50 @@ cd server
 wrangler d1 create recall-license          # copy the database_id it prints into wrangler.toml
 wrangler d1 migrations apply recall-license --remote
 openssl pkey -in ../keys/license-signing.pem -outform DER | base64 | wrangler secret put SIGNING_KEY
-openssl rand -hex 24                        # save this somewhere safe: it's your admin password
-wrangler secret put ADMIN_TOKEN             # paste the value from the line above
 wrangler deploy                             # prints https://recall-license.<you>.workers.dev
 ```
 
-Then put that URL into `project.yml` (`RECALL_LICENSE_SERVER` under `Release`), and build the DMG
-with `scripts/make-dmg.sh`.
+Next:
+1. Put that URL into `project.yml` (`RECALL_LICENSE_SERVER` under `Release`).
+2. Build the DMG with `scripts/make-dmg.sh`.
+3. Before going live, set `DODO_API_BASE` back to `https://live.dodopayments.com` and run `wrangler deploy` again.
 
-## Issuing and managing keys
+## Support cases
 
-```bash
-export URL=https://recall-license.<you>.workers.dev
-export ADMIN=<your admin token>
-
-# New key for a buyer (3 Macs by default)
-curl -X POST $URL/v1/admin/licenses -H "Authorization: Bearer $ADMIN" \
-  -H 'Content-Type: application/json' -d '{"email":"buyer@example.com"}'
-
-# Look up a buyer's keys and Macs
-curl "$URL/v1/admin/licenses?email=buyer@example.com" -H "Authorization: Bearer $ADMIN"
-
-# Refund or chargeback: turn the key off (apps drop to Free at their next re-check)
-curl -X POST $URL/v1/admin/revoke -H "Authorization: Bearer $ADMIN" \
-  -H 'Content-Type: application/json' -d '{"key":"RCL-…"}'
-
-# "I got a new Mac and can't deactivate the old one": free all slots
-curl -X POST $URL/v1/admin/reset-devices -H "Authorization: Bearer $ADMIN" \
-  -H 'Content-Type: application/json' -d '{"key":"RCL-…"}'
-```
-
-Only a SHA-256 hash of each key is stored, so the server can't show a key again after creating it.
-Keep a copy, or create a new key and revoke the old one.
+Everything is done in the Dodo Payments dashboard:
+- **Refund:** the key turns off automatically. The buyer's Macs drop to Free at their next monthly re-check.
+- **"I got a new Mac and can't deactivate the old one":** remove that activation instance from the key in Dodo.
+  It frees the slot, and the old Mac drops to Free at its next re-check.
+- **Lost key:** Dodo can resend it, or look it up by the buyer's email.
 
 ## Keys you must back up
 
 - `keys/license-signing.pem` signs Pro tokens. The app ships with its public half
   (`Licensing/LicenseToken.swift`).
-  - **If it leaks:** anyone can make Pro tokens. Generate a new key, ship an update with the new public key,
-    and existing customers re-enter their key once.
+  - **If it leaks:** anyone can make Pro tokens. Generate a new key and ship an update with its public half.
+    Customers then re-enter their key once.
   - **If it's lost:** same fix.
-- `keys/recall-signing.p12` is the code-signing certificate (see the main README).
+- `keys/recall-signing.p12` and `keys/recall-signing-password.txt` are the code-signing certificate (see the main README).
 
-Both are git-ignored. Keep them in a password manager or an encrypted backup.
+All of them are git-ignored. Keep them in a password manager or an encrypted backup.
 
-## Local development
+## Local development (no Dodo account needed)
 
-`wrangler dev` reads secrets from `server/.dev.vars` (git-ignored):
+`dev/mock-dodo.mjs` imitates Dodo's license endpoints. Its responses were checked against `test.dodopayments.com`.
 
+`server/.dev.vars` (git-ignored):
 ```
 SIGNING_KEY=<openssl pkey -in ../keys/license-signing.pem -outform DER | base64>
-ADMIN_TOKEN=<any random string>
+DODO_API_BASE=http://127.0.0.1:8788
 ```
 
 ```bash
+node server/dev/mock-dodo.mjs &            # mock Dodo on :8788
 cd server
 wrangler d1 migrations apply recall-license --local
-wrangler dev --port 8787 --ip 127.0.0.1
+wrangler dev --port 8787 --ip 127.0.0.1    # Debug builds of the app use this
+curl -X POST localhost:8788/mock/keys -d '{"limit":3}'   # a test key, like a purchase
 ```
 
-Debug builds of the app talk to `http://127.0.0.1:8787`.
-
-## Not built yet
-
-- **Automatic key delivery after purchase.** Right now you issue keys with the curl command above. Once you pick a
-  store (Lemon Squeezy, Paddle, Gumroad…), add a webhook endpoint that verifies the store's signature,
-  calls the same code as `/v1/admin/licenses`, and emails the key (or let the store email it).
-- **Rate limiting.** Keys carry 100 random bits, so guessing them isn't practical. Cloudflare's rate-limiting
-  rules can still be added in the dashboard if needed.
+To test against real Dodo test mode instead, set `DODO_API_BASE=https://test.dodopayments.com` and use a key from a
+test purchase.
