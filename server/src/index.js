@@ -235,9 +235,8 @@ async function trial(request, env) {
     if ((today?.n ?? 0) >= MAX_NEW_TRIALS_PER_DAY) return json({ error: "busy" }, 429);
     // One source can't use up the global budget: cap new trials per address (IPv6 by /64) per day.
     const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-    const network = ip.includes(":") ? ip.split(":").slice(0, 4).join(":") : ip;
     const day = new Date(now * 1000).toISOString().slice(0, 10);
-    const source = await sha256Hex(`${day}|${network}`);
+    const source = await sourceKey(env, day, sourceNetwork(ip));
     const used = await env.DB.prepare(
       "INSERT INTO trial_ips (day, source, n) VALUES (?1, ?2, 1) ON CONFLICT (day, source) DO UPDATE SET n = n + 1 RETURNING n",
     ).bind(day, source).first();
@@ -376,6 +375,33 @@ async function signingKey(env) {
     cachedKey = await crypto.subtle.importKey("pkcs8", der, { name: "Ed25519" }, false, ["sign"]);
   }
   return cachedKey;
+}
+
+// The address a trial is counted against: the IPv4 address, or the first 64 bits of an IPv6 one,
+// written out in full so every spelling of the same network gives the same string.
+function sourceNetwork(ip) {
+  if (!ip.includes(":")) return ip;
+  let text = ip.toLowerCase().split("%")[0];
+  const mapped = text.match(/^(?:::ffff:|::)(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return mapped[1];
+  const v4 = text.match(/^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) text = v4[1] + ((+v4[2] << 8) | +v4[3]).toString(16) + ":" + ((+v4[4] << 8) | +v4[5]).toString(16);
+  const [head, tail, extra] = text.split("::");
+  if (extra !== undefined) return "unknown";
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const groups = tail === undefined ? left : [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right];
+  if (groups.length !== 8 || !groups.every((g) => /^[0-9a-f]{1,4}$/.test(g))) return "unknown";
+  return groups.slice(0, 4).map((g) => g.padStart(4, "0")).join(":");
+}
+
+// HMAC of the network under a key derived from the server secret and the day: the stored value can't be
+// reversed by trying every address, and yesterday's rows can't be matched to anyone today.
+async function sourceKey(env, day, network) {
+  const hmac = async (key, data) => crypto.subtle.sign("HMAC", await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]), data);
+  const enc = new TextEncoder();
+  const dayKey = await hmac(enc.encode(env.SIGNING_KEY || ""), enc.encode(`trial-source|${day}`));
+  return [...new Uint8Array(await hmac(dayKey, enc.encode(network)))].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function sha256Hex(s) {
