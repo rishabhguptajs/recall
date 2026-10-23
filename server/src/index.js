@@ -31,6 +31,7 @@
 const RECHECK_SECONDS = 30 * 24 * 3600;
 const TRIAL_SECONDS = 14 * 24 * 3600;
 const MAX_NEW_TRIALS_PER_DAY = 3000; // keeps the table from being filled with made-up device IDs
+const MAX_NEW_TRIALS_PER_SOURCE_PER_DAY = 5; // per address (IPv6: per /64), so one source can't use up the budget
 const DEVICE_RE = /^[0-9a-f]{64}$/;
 const DODO_TIMEOUT_MS = 10_000;
 
@@ -232,6 +233,16 @@ async function trial(request, env) {
     const since = now - (now % 86400);
     const today = await env.DB.prepare("SELECT COUNT(*) AS n FROM trials WHERE started_at >= ?").bind(since).first();
     if ((today?.n ?? 0) >= MAX_NEW_TRIALS_PER_DAY) return json({ error: "busy" }, 429);
+    // One source can't use up the global budget: cap new trials per address (IPv6 by /64) per day.
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+    const network = ip.includes(":") ? ip.split(":").slice(0, 4).join(":") : ip;
+    const day = new Date(now * 1000).toISOString().slice(0, 10);
+    const source = await sha256Hex(`${day}|${network}`);
+    const used = await env.DB.prepare(
+      "INSERT INTO trial_ips (day, source, n) VALUES (?1, ?2, 1) ON CONFLICT (day, source) DO UPDATE SET n = n + 1 RETURNING n",
+    ).bind(day, source).first();
+    if ((used?.n ?? 0) > MAX_NEW_TRIALS_PER_SOURCE_PER_DAY) return json({ error: "busy" }, 429);
+    await env.DB.prepare("DELETE FROM trial_ips WHERE day < ?").bind(day).run();
     await env.DB.prepare("INSERT OR IGNORE INTO trials (device, started_at) VALUES (?, ?)").bind(device, now).run();
     row = await env.DB.prepare("SELECT started_at FROM trials WHERE device = ?").bind(device).first();
   }
