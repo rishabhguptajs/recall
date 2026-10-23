@@ -6,7 +6,7 @@ finds it across your files, screenshots and clipboard history.
 
 Everything stays on your Mac: no cloud, no account, no telemetry. Your files, searches and clipboard
 never leave it. Recall makes only two kinds of network request:
-- the Pro license check (see [Free and Pro](#free-and-pro));
+- the trial and Pro license checks (see [Free and Pro](#free-and-pro));
 - update checks, which are off until you turn them on or choose **Check for Updates…** (see [Updates](#updates)).
 
 ## Free and Pro
@@ -18,6 +18,18 @@ never leave it. Recall makes only two kinds of network request:
 | Screenshot text search | | ✓ |
 | Extra folders | | ✓ |
 | Keep clipboard for 90 days / 1 year | | ✓ |
+
+**14-day Pro trial.** Every Mac gets all of Pro for 14 days, starting the first time Recall runs with internet access.
+- The app asks the license server for a signed trial token (same Ed25519 key as Pro, with plan `trial`). It sends only
+  the anonymous device ID. The server stores that ID and the start date (table `trials`), so deleting Recall's files or
+  reinstalling gives back the same dates and can't restart the trial.
+- While the trial runs the app refreshes the token about every 6 hours, so the server's date keeps the Mac's clock
+  honest: "now" is the latest of the system clock, the newest date seen before, and the token's date.
+- Offline at first launch: no trial yet (Free) until the Mac is online. After the trial, or with a paid license,
+  the app stops asking.
+- Limits: a patched copy of the app can't be stopped (it isn't notarized, and no offline check can stop that),
+  and a new Mac or reset hardware ID gets a new trial. A global cap of 3,000 new trials a day stops a flood of
+  made-up IDs.
 
 **Nothing is deleted when Pro is off.** Screenshots stay indexed and older clipboard items stay stored; they are only
 hidden. Activating Pro brings them back instantly.
@@ -34,7 +46,7 @@ In Settings → License:
    - Key refunded or disabled, or this Mac removed in Dodo: back to Free.
 4. **Deactivate This Mac** frees the slot.
 
-Free users never contact the server. The server code is in [`server/`](server/README.md).
+After the trial, Free users never contact the server. The server code is in [`server/`](server/README.md).
 
 ## What it searches
 
@@ -52,9 +64,13 @@ Code and data files (JS, CSS, JSON, CSV…) are searchable by name and their fir
 ## Using it
 
 - **⌥Space** opens and closes the search panel (change it in Settings).
-- Results update as you type. **↑↓** select, **↩** open, **⌘↩** show in Finder, **⌘C** copy
-  (clipboard items go back on the clipboard; files copy like in Finder).
-- **⌘Y** previews with Quick Look. **Space** previews too, once you've moved through the results with the arrow keys.
+- Results update as you type. **↑↓** select, **↩** open, **⌘↩** show in Finder, **⌥↩** copy the file's path,
+  **⌘C** copy (clipboard items go back on the clipboard; files copy like in Finder), **⌘⌫** move the selected file or
+  screenshot to the Trash (after arrowing into the results; in the search box it clears the line).
+- **Hold ⌘Y** to peek at the selected result with Quick Look; let go and it closes. **↑↓** while holding changes the
+  result. **Hold Space** does the same once you've moved through the results with the arrow keys.
+- **⌘1 ⌘2 ⌘3 ⌘4** switch between All, Files, Screenshots and Clipboard. **⌘,** opens Settings.
+- The search box supports **⌘A**, **⌘X**, **⌘V**, **⌘Z** and **⇧⌘Z**, plus the usual **⌘←/→**, **⌥←/→** and **⌥⌫**.
 - Filter with the tabs, or type **/f** (files), **/s** (screenshots) or **/c** (clipboard).
 - The menu-bar icon shows indexing progress and has Pause Indexing, Settings, Check for Updates and Quit.
 
