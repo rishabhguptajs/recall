@@ -37,7 +37,8 @@ if [[ -f releases/Recall-$VERSION.dmg && "${REPLACE:-0}" != "1" ]]; then
 fi
 cp "$OUT" releases/
 BASE=${RECALL_DOWNLOAD_BASE:-https://raegent.com/recall/download/}
-"$BIN/generate_appcast" --ed-key-file "$KEY" --download-url-prefix "$BASE" \
+rm -f releases/appcast.xml # rebuilt each time so old delta entries never linger
+"$BIN/generate_appcast" --maximum-deltas 0 --ed-key-file "$KEY" --download-url-prefix "$BASE" \
   --link https://raegent.com/recall -o releases/appcast.xml releases
 echo "Updated releases/appcast.xml (version $VERSION, build $BUILD)."
 echo "Publish: releases/Recall-$VERSION.dmg -> $BASE, releases/appcast.xml -> https://raegent.com/recall/appcast.xml"
