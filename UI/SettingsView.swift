@@ -302,9 +302,18 @@ struct LicenseSettings: View {
                         Text("This frees the slot so you can use your key on another Mac. Nothing is deleted; Pro items are hidden until you activate again.")
                     }
             } else {
-                LabeledContent("Status", value: "Recall Free")
+                if license.trialActive {
+                    LabeledContent("Status") {
+                        Label("Pro trial: \(license.trialDaysLeft) \(license.trialDaysLeft == 1 ? "day" : "days") left", systemImage: "clock.fill")
+                            .foregroundStyle(.green)
+                    }
+                } else {
+                    LabeledContent("Status", value: license.trialEnd == nil ? "Recall Free" : "Recall Free (trial ended)")
+                }
                 Section {
-                    Text("Pro adds screenshot text search, your full clipboard history, longer retention and extra folders.")
+                    Text(license.trialActive
+                         ? "You have every Pro feature for the next \(license.trialDaysLeft) \(license.trialDaysLeft == 1 ? "day" : "days"). After that Recall goes back to Free; nothing is deleted, Pro items are only hidden until you activate. Paste a key below any time to keep Pro."
+                         : "Pro adds screenshot text search, your full clipboard history, longer retention and extra folders.")
                         .font(.callout)
                     TextField("License key", text: $keyInput, prompt: Text("Paste the key from your purchase email"))
                         .font(.system(.body, design: .monospaced))
@@ -321,7 +330,7 @@ struct LicenseSettings: View {
                 Text(message).font(.callout).foregroundStyle(.orange)
             }
             Section("Privacy") {
-                Text("Recall contacts its license server only when you activate or deactivate, and about once a month while Pro is active to re-check the key with Dodo Payments, where it was bought. It sends the license key and an anonymous ID for this Mac (a one-way hash), nothing else: no files, searches, clipboard or usage data. Recall Free never contacts the server. If you're offline, Pro keeps working.")
+                Text("Recall contacts its license server in three cases: to start and keep track of your 14-day trial (while it runs, and once when it has ended), when you activate or deactivate, and about once a month while Pro is active to re-check the key with Dodo Payments, where it was bought. Requests carry an anonymous ID for this Mac (a one-way hash) and, for a license, the key: no files, searches, clipboard or usage data. The server remembers the ID so the trial can't be restarted. After the trial, Recall Free doesn't contact the server. If you're offline, Pro keeps working.")
                     .font(.callout).foregroundStyle(.secondary)
             }
         }

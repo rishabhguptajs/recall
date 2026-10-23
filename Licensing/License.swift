@@ -3,6 +3,7 @@ import os
 
 /// What Pro unlocks. Free: file search (keyword + meaning) and the last 7 days of clipboard history.
 /// Pro: screenshot search, full clipboard history, longer retention and extra folders.
+/// Pro is on with a paid license or during the 14-day trial that starts at first launch (see Trial).
 /// Nothing is deleted when Pro is off: it's hidden, so activating brings it straight back.
 enum Pro {
     static let freeClipboardDays = 7
@@ -32,8 +33,18 @@ final class LicenseManager: ObservableObject {
     @Published private(set) var key: String?
     @Published private(set) var lastChecked: Date?
     @Published private(set) var busy = false
+    /// The server-issued trial token; nil until the Mac has reached the server once.
+    @Published private(set) var trialToken: TrialToken?
 
-    var isPro: Bool { token != nil }
+    /// A paid, activated license.
+    var isPaid: Bool { token != nil }
+    var trialEnd: Date? { trialToken?.end }
+    var trialActive: Bool { !isPaid && (trialToken.map { Trial.now(token: $0) < $0.end } ?? false) }
+    /// Pro features are on: paid, or still inside the trial.
+    var isPro: Bool { isPaid || trialActive }
+    var trialDaysLeft: Int { trialToken.map { Trial.daysLeft(end: $0.end, now: Trial.now(token: $0)) } ?? 0 }
+    private var trialTimer: Timer?
+    private var trialRequestInFlight = false
 
     /// Set at build time (RECALL_LICENSE_SERVER in project.yml).
     static var serverURL: URL? {
@@ -51,9 +62,44 @@ final class LicenseManager: ObservableObject {
     /// Loads the saved token (no network) and starts the background re-check timer.
     func start() {
         load()
+        trialToken = Trial.loadToken()
+        Trial.noteSeen()
+        apply(token) // also turns Pro on for a running trial when there's no paid license
+        scheduleTrialEnd()
         refreshIfDue()
+        refreshTrial()
         timer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { _ in
-            Task { @MainActor in LicenseManager.shared.refreshIfDue() }
+            Task { @MainActor in
+                LicenseManager.shared.refreshIfDue()
+                LicenseManager.shared.refreshTrial()
+                LicenseManager.shared.scheduleTrialEnd()
+            }
+        }
+    }
+
+    /// Asks the server for this Mac's trial token: the first time (which starts the trial) and then
+    /// while the trial runs, so the server's date keeps the local clock honest. Once the trial has ended,
+    /// or with a paid license, it never asks again. Offline or a server problem: nothing changes, and it
+    /// tries again on the next timer tick. Sends only the anonymous device ID.
+    func refreshTrial() {
+        guard !isPaid, !trialRequestInFlight, trialToken == nil || trialActive else { return }
+        trialRequestInFlight = true
+        Task {
+            defer { trialRequestInFlight = false }
+            guard let raw = try? await request("v1/trial", key: nil), let fresh = TrialToken(raw) else { return }
+            Trial.save(fresh)
+            trialToken = fresh
+            apply(token)
+            scheduleTrialEnd()
+        }
+    }
+
+    /// Turns Pro off the moment the trial ends, even if Recall has been running the whole time.
+    fileprivate func scheduleTrialEnd() {
+        trialTimer?.invalidate()
+        guard let t = trialToken, Trial.now(token: t) < t.end else { return }
+        trialTimer = Timer.scheduledTimer(withTimeInterval: t.end.timeIntervalSince(Trial.now(token: t)) + 1, repeats: false) { _ in
+            Task { @MainActor in LicenseManager.shared.apply(LicenseManager.shared.token) }
         }
     }
 
@@ -117,12 +163,14 @@ final class LicenseManager: ObservableObject {
 
     // MARK: - Networking
 
-    private func request(_ path: String, key: String) async throws -> String {
+    private func request(_ path: String, key: String?) async throws -> String {
         guard let base = Self.serverURL else { throw ActivationError.notConfigured }
         var req = URLRequest(url: base.appendingPathComponent(path), timeoutInterval: 15)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["key": key, "device": DeviceID.current])
+        var body = ["device": DeviceID.current]
+        if let key { body["key"] = key }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let config = URLSessionConfiguration.ephemeral // no cookies, no cache
         let session = URLSession(configuration: config)
         defer { session.finishTasksAndInvalidate() }
@@ -141,6 +189,7 @@ final class LicenseManager: ObservableObject {
         case "revoked": throw ActivationError.revoked
         case "not_activated": throw ActivationError.notActivated
         case "device_limit": throw ActivationError.deviceLimit
+        case "busy": throw ActivationError.server("busy")
         default: throw ActivationError.server("HTTP \(status)")
         }
     }
@@ -177,8 +226,9 @@ final class LicenseManager: ObservableObject {
     private func apply(_ token: LicenseToken?) {
         let wasPro = Pro.isActive
         self.token = token
-        Pro.flag.withLock { $0 = token != nil }
-        if wasPro != (token != nil) {
+        let nowPro = isPro
+        Pro.flag.withLock { $0 = nowPro }
+        if wasPro != nowPro {
             NotificationCenter.default.post(name: .licenseChanged, object: nil)
         }
     }

@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let panel = SearchPanelController()
     private let settings = SettingsWindowController()
     private let statusMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let trialMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let pauseMenuItem = NSMenuItem(title: "Pause Indexing", action: #selector(togglePause), keyEquivalent: "")
     #if DEBUG
     private var debugBridge: DebugBridge?
@@ -154,6 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
+        trialMenuItem.isEnabled = false
+        menu.addItem(trialMenuItem)
         pauseMenuItem.target = self
         menu.addItem(pauseMenuItem)
         menu.addItem(.separator())
@@ -166,6 +169,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         let status = IndexStatus.shared
         statusMenuItem.title = status.summary
+        let lm = LicenseManager.shared
+        trialMenuItem.isHidden = !lm.trialActive
+        trialMenuItem.title = "Pro trial: \(lm.trialDaysLeft) \(lm.trialDaysLeft == 1 ? "day" : "days") left"
         pauseMenuItem.title = status.isPaused ? "Resume Indexing" : "Pause Indexing"
     }
 
