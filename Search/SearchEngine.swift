@@ -121,6 +121,18 @@ final class SearchEngine {
         let meaningful = terms.filter { !Self.stopwords.contains($0) }
         let quoted = (meaningful.isEmpty ? terms : meaningful).map { "\"\($0)\"" + ($0.count >= 2 ? "*" : "") }
         var hits = runFTS(quoted.joined(separator: " "), source: source, limit: limit)
+        if !allowLoose && hits.count < Self.looseFallbackThreshold {
+            // Meaning search is active, so body text stays all-terms; but a file *named* after any
+            // meaningful word ("Pricing.png" for "pricing table") is still worth showing.
+            let words = terms.filter { !Self.stopwords.contains($0) }
+            if !words.isEmpty {
+                let titleQuery = "title : (" + words.map { "\"\($0)\"" + ($0.count >= 2 ? "*" : "") }.joined(separator: " OR ") + ")"
+                let seen = Set(hits.map(\.itemId))
+                hits += runFTS(titleQuery, source: source, limit: limit)
+                    .filter { !seen.contains($0.itemId) }
+                    .map { var h = $0; h.weight = 0.5; return h }
+            }
+        }
         if allowLoose && hits.count < Self.looseFallbackThreshold {
             let loose = terms.filter { !Self.stopwords.contains($0) }
             if loose.count > 1 || (loose.count == 1 && loose.count < terms.count) {

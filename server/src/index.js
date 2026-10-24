@@ -11,11 +11,13 @@
 //   POST /v1/activate    {key, device} -> {token}
 //   POST /v1/validate    {key, device} -> {token}
 //   POST /v1/deactivate  {key, device} -> {ok}
+//   POST /v1/trial       {device} -> {token}   14-day Pro trial, started once per Mac (see trial())
 //
 // It also serves the app's downloads from the R2 bucket RELEASES (only these names, nothing else):
 //   GET /appcast.xml                 Sparkle update feed (raegent.com/recall/appcast.xml proxies it)
 //   GET /download/latest             redirects to the newest Recall-<version>.dmg
 //   GET /download/Recall-<v>.dmg     the DMG (supports Range, so interrupted downloads resume)
+//   GET /media/<name>-v<n>.mp4|.jpg  the website's videos and posters (R2 keys media/…, not counted)
 //
 // Counting (anonymous, a number per day, nothing about the person): each DMG download and each
 // update check (by app version, from Sparkle's User-Agent). GET /v1/stats with
@@ -27,6 +29,9 @@
 // Tokens are "<base64url(JSON payload)>.<base64url(Ed25519 signature of the first part)>".
 
 const RECHECK_SECONDS = 30 * 24 * 3600;
+const TRIAL_SECONDS = 14 * 24 * 3600;
+const MAX_NEW_TRIALS_PER_DAY = 3000; // keeps the table from being filled with made-up device IDs
+const MAX_NEW_TRIALS_PER_SOURCE_PER_DAY = 5; // per address (IPv6: per /64), so one source can't use up the budget
 const DEVICE_RE = /^[0-9a-f]{64}$/;
 const DODO_TIMEOUT_MS = 10_000;
 
@@ -39,6 +44,7 @@ export default {
           case "/v1/activate": return await activate(request, env);
           case "/v1/validate": return await validate(request, env);
           case "/v1/deactivate": return await deactivate(request, env);
+          case "/v1/trial": return await trial(request, env);
         }
       } else if (request.method === "GET" || request.method === "HEAD") {
         if (url.pathname === "/") return json({ ok: true, service: "recall-license" });
@@ -58,6 +64,7 @@ export default {
 // MARK: - Downloads
 
 const DMG_RE = /^Recall-\d+(\.\d+){1,3}\.dmg$/;
+const MEDIA_RE = /^[a-z0-9]+(-[a-z0-9]+)*-v\d+\.(mp4|jpg)$/;
 
 async function serveRelease(request, env, url, ctx) {
   if (!env.RELEASES) return null;
@@ -72,6 +79,12 @@ async function serveRelease(request, env, url, ctx) {
   } else if (url.pathname.startsWith("/download/") && DMG_RE.test(url.pathname.slice(10))) {
     key = url.pathname.slice(10); type = "application/x-apple-diskimage"; cache = "public, max-age=31536000, immutable";
   }
+  else if (url.pathname.startsWith("/media/") && MEDIA_RE.test(url.pathname.slice(7))) {
+    // Website videos and posters, so the site's host never serves them. Names carry a version (-v1),
+    // so a replacement gets a new name and the long cache is safe.
+    const name = url.pathname.slice(7);
+    key = `media/${name}`; type = name.endsWith(".mp4") ? "video/mp4" : "image/jpeg"; cache = "public, max-age=31536000, immutable";
+  }
   if (!key) return null;
   const range = parseRange(request.headers.get("Range"));
   const object = request.method === "HEAD"
@@ -83,7 +96,7 @@ async function serveRelease(request, env, url, ctx) {
       // Strict and bounded: the header is client-controlled, so junk must not create new rows.
       const v = /^Recall\/(\d{1,3}(?:\.\d{1,3}){1,3})(?:\s|$)/.exec(request.headers.get("User-Agent") ?? "")?.[1] ?? "other";
       ctx.waitUntil(count(env, `update_check:${v}`));
-    } else if (!range || (range.offset ?? -1) === 0) {
+    } else if (key.startsWith("Recall-") && (!range || (range.offset ?? -1) === 0)) {
       ctx.waitUntil(count(env, `download:${key.slice(7, -4)}`)); // first chunk only, so resumes don't double count
     }
   }
@@ -207,6 +220,34 @@ async function activate(request, env) {
   return json({ token: await signToken(env, licenseKeyId, input.device, now) });
 }
 
+// The Mac's first call starts its trial; later calls return the same dates (also after the trial has
+// ended, so the app learns it's over). The server's clock decides, and the token is tied to the device hash.
+async function trial(request, env) {
+  let body = {};
+  try { body = (await request.json()) || {}; } catch { /* bad JSON */ }
+  const device = typeof body.device === "string" ? body.device.toLowerCase() : "";
+  if (!DEVICE_RE.test(device)) return json({ error: "bad_device" }, 400);
+  const now = nowSeconds();
+  let row = await env.DB.prepare("SELECT started_at FROM trials WHERE device = ?").bind(device).first();
+  if (!row) {
+    const since = now - (now % 86400);
+    const today = await env.DB.prepare("SELECT COUNT(*) AS n FROM trials WHERE started_at >= ?").bind(since).first();
+    if ((today?.n ?? 0) >= MAX_NEW_TRIALS_PER_DAY) return json({ error: "busy" }, 429);
+    // One source can't use up the global budget: cap new trials per address (IPv6 by /64) per day.
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+    const day = new Date(now * 1000).toISOString().slice(0, 10);
+    const source = await sourceKey(env, day, sourceNetwork(ip));
+    const used = await env.DB.prepare(
+      "INSERT INTO trial_ips (day, source, n) VALUES (?1, ?2, 1) ON CONFLICT (day, source) DO UPDATE SET n = n + 1 RETURNING n",
+    ).bind(day, source).first();
+    if ((used?.n ?? 0) > MAX_NEW_TRIALS_PER_SOURCE_PER_DAY) return json({ error: "busy" }, 429);
+    await env.DB.prepare("DELETE FROM trial_ips WHERE day < ?").bind(day).run();
+    await env.DB.prepare("INSERT OR IGNORE INTO trials (device, started_at) VALUES (?, ?)").bind(device, now).run();
+    row = await env.DB.prepare("SELECT started_at FROM trials WHERE device = ?").bind(device).first();
+  }
+  return json({ token: await signTrialToken(env, device, row.started_at, now) });
+}
+
 async function validate(request, env) {
   const input = await readClientInput(request);
   if (input.error) return json(input, 400);
@@ -319,6 +360,13 @@ async function signToken(env, licenseId, device, now) {
   return `${body}.${base64url(new Uint8Array(sig))}`;
 }
 
+async function signTrialToken(env, device, start, now) {
+  const payload = { v: 1, plan: "trial", dev: device, iat: now, tst: start, tnd: start + TRIAL_SECONDS };
+  const body = base64url(new TextEncoder().encode(JSON.stringify(payload)));
+  const sig = await crypto.subtle.sign({ name: "Ed25519" }, await signingKey(env), new TextEncoder().encode(body));
+  return `${body}.${base64url(new Uint8Array(sig))}`;
+}
+
 let cachedKey;
 async function signingKey(env) {
   if (!cachedKey) {
@@ -327,6 +375,33 @@ async function signingKey(env) {
     cachedKey = await crypto.subtle.importKey("pkcs8", der, { name: "Ed25519" }, false, ["sign"]);
   }
   return cachedKey;
+}
+
+// The address a trial is counted against: the IPv4 address, or the first 64 bits of an IPv6 one,
+// written out in full so every spelling of the same network gives the same string.
+function sourceNetwork(ip) {
+  if (!ip.includes(":")) return ip;
+  let text = ip.toLowerCase().split("%")[0];
+  const mapped = text.match(/^(?:::ffff:|::)(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return mapped[1];
+  const v4 = text.match(/^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) text = v4[1] + ((+v4[2] << 8) | +v4[3]).toString(16) + ":" + ((+v4[4] << 8) | +v4[5]).toString(16);
+  const [head, tail, extra] = text.split("::");
+  if (extra !== undefined) return "unknown";
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const groups = tail === undefined ? left : [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right];
+  if (groups.length !== 8 || !groups.every((g) => /^[0-9a-f]{1,4}$/.test(g))) return "unknown";
+  return groups.slice(0, 4).map((g) => g.padStart(4, "0")).join(":");
+}
+
+// HMAC of the network under a key derived from the server secret and the day: the stored value can't be
+// reversed by trying every address, and yesterday's rows can't be matched to anyone today.
+async function sourceKey(env, day, network) {
+  const hmac = async (key, data) => crypto.subtle.sign("HMAC", await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]), data);
+  const enc = new TextEncoder();
+  const dayKey = await hmac(enc.encode(env.SIGNING_KEY || ""), enc.encode(`trial-source|${day}`));
+  return [...new Uint8Array(await hmac(dayKey, enc.encode(network)))].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function sha256Hex(s) {

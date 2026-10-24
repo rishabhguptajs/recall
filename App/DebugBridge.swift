@@ -136,6 +136,8 @@ final class DebugBridge {
                                       "server": LicenseManager.serverURL?.absoluteString ?? "none",
                                       "activeFolders": Preferences.activeFolders.map(\.path),
                                       "savedFolders": Preferences.indexedFolders.map(\.path)]
+            out["trialActive"] = lm.trialActive
+            out["trialDaysLeft"] = lm.trialDaysLeft
             if let t = lm.token {
                 out["licenseId"] = t.licenseId
                 out["recheckAfter"] = t.recheckAfter.timeIntervalSince1970

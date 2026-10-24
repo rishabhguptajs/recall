@@ -12,8 +12,9 @@ A small Cloudflare Worker in front of **Dodo Payments' license key API**. The fr
 license file to another Mac doesn't share a slot. The Worker keeps one row per activated Mac (a key hash, an
 anonymous device hash and Dodo's instance ID). It doesn't keep the customer's name or email.
 
-**When the app calls it:** only on activate and deactivate, and about every 30 days afterwards to re-check. It sends
-the license key and the anonymous device hash. Free users never call it.
+**When the app calls it:** for the 14-day trial (`POST /v1/trial`, device hash only, at first launch and about every 6
+hours until the trial ends), on activate and deactivate, and about every 30 days afterwards to re-check. A Mac whose
+trial has ended and that has no license never calls it again.
 
 **When Pro turns off:** if Dodo or the Worker is down, Pro keeps working. Only a refunded or disabled key, or a Mac
 removed in the Dodo dashboard, turns Pro off.
@@ -74,6 +75,18 @@ It counts, per UTC day:
 
 No IPs or device data are stored. `GET /v1/stats` with `Authorization: Bearer <STATS_TOKEN>` returns the counts plus
 Pro activation numbers from `activations`. `scripts/stats.sh` prints them.
+
+## Website videos
+
+The website's videos and poster are in R2 under `media/` and served at `/media/<name>-v<n>.mp4|.jpg` (same Range
+support, one-year cache, not counted as downloads). The site loads nothing until Play is pressed. To change one,
+upload it under a new version name and update `components/recall-video.tsx` in the website:
+
+```bash
+wrangler r2 object put recall-releases/media/recall-short-v2.mp4 --remote --file <file> --content-type video/mp4
+```
+
+Now live: `recall-short-v1.mp4` (22.8 s), `recall-film-v1.mp4` (57.6 s), `recall-poster-v1.jpg`.
 
 ## Support cases
 
