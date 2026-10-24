@@ -54,12 +54,24 @@ actor EmbeddingWorker {
             let kind: String = r[5]
             // Code and data files are keyword-only: their word soup drowns out real matches.
             // Title-only items (no text) are embedded by their name.
-            let input = Self.keywordOnlyKinds.contains(kind) ? "" : (text.isEmpty ? title : text)
+            // The file name goes in front of every chunk so a short or text-poor item (a pricing screenshot
+            // with 7 characters of OCR) is still found by what it is called.
+            let name = Self.readableTitle(title)
+            let input = Self.keywordOnlyKinds.contains(kind) ? "" : (text.isEmpty ? name : "\(name). \(text)")
             return Pending(chunkId: r[0], itemId: r[1], source: ItemSource(rawValue: r[2]) ?? .file, text: input)
         }
     }
 
     static let keywordOnlyKinds: Set<String> = ["code", "data"]
+
+    /// "Claude_Marketing-Pricing.png" -> "Claude Marketing Pricing".
+    static func readableTitle(_ title: String) -> String {
+        var name = title
+        if let dot = name.lastIndex(of: "."), name.distance(from: dot, to: name.endIndex) <= 6 {
+            name = String(name[..<dot])
+        }
+        return name.replacingOccurrences(of: "[_\\-]+", with: " ", options: .regularExpression)
+    }
 
     private func embed(_ batch: [Pending], with embedder: Embedder) async {
         let results: [(Pending, [Float]?)] = batch.map { ($0, $0.text.isEmpty ? nil : embedder.embed($0.text)) }
@@ -82,7 +94,7 @@ actor EmbeddingWorker {
 
     private func resetIfModelChanged(_ embedder: Embedder) {
         let db = AppDatabase.shared
-        let policyId = embedder.id + "|skip-code-data"
+        let policyId = embedder.id + "|skip-code-data|title-prefix-v1"
         if db.meta("embedder_id") != policyId {
             db.clearEmbeddings()
             db.setMeta("embedder_id", policyId)
