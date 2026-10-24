@@ -330,7 +330,7 @@ struct LicenseSettings: View {
                 Text(message).font(.callout).foregroundStyle(.orange)
             }
             Section("Privacy") {
-                Text("Recall contacts its license server in three cases: to start and keep track of your 14-day trial (while it runs, and once when it has ended), when you activate or deactivate, and about once a month while Pro is active to re-check the key with Dodo Payments, where it was bought. Requests carry an anonymous ID for this Mac (a one-way hash) and, for a license, the key: no files, searches, clipboard or usage data. The server remembers the ID so the trial can't be restarted. After the trial, Recall Free doesn't contact the server. If you're offline, Pro keeps working.")
+                Text("Recall only contacts its license server for your trial and Pro key, sending an anonymous Mac ID (a one-way hash) and the key. Never your files, searches or clipboard. Recall Free doesn't contact it.")
                     .font(.callout).foregroundStyle(.secondary)
             }
         }
